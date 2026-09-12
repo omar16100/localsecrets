@@ -18,13 +18,13 @@
 - [x] Printed shares with index and checksum
 - [x] argon2id password hashing
 - [x] Opaque token generation and hashing
-- [ ] Apply findings from the codex crypto review
+- [x] Apply findings from the codex crypto review
 
 ## M2 — ls-json and ls-http
-- [ ] JSON parse, build, serialise; reject malformed input without panicking
-- [ ] HTTP/1.1 request and response parsing, with body size limits
-- [ ] Blocking server on std::net with a bounded thread pool
-- [ ] Blocking client for the CLI
+- [x] JSON parse, build, serialise; reject malformed input without panicking
+- [x] HTTP/1.1 request and response parsing, with body size limits
+- [x] Blocking server on std::net with a bounded thread pool
+- [x] Blocking client for the CLI
 - [ ] Structured logging to stderr, level from the environment
 
 ## M3 — ls-store append-only log

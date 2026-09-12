@@ -282,6 +282,44 @@ fn import_reads_a_dotenv_file() {
 }
 
 #[test]
+fn import_can_read_from_standard_input() {
+    let cli = Cli::start("import-stdin");
+    cli.ready();
+
+    let output = cli.run_with_stdin(&["import", "-"], "FROM_STDIN=piped value\n");
+    assert!(
+        output.status.success(),
+        "import - failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(cli.stdout(&["get", "FROM_STDIN"]).trim(), "piped value");
+}
+
+#[test]
+fn an_environment_can_be_copied_to_another_one() {
+    let cli = Cli::start("copy-env");
+    cli.ready();
+    cli.run_with_stdin(&["set", "A"], "one\n");
+    cli.run_with_stdin(&["set", "B"], "two words\n");
+    cli.stdout(&["env", "create", "staging", "--project", "demo"]);
+
+    let exported = cli.stdout(&["export"]);
+    let output = cli.run_with_stdin(&["import", "-", "--env", "staging"], &exported);
+    assert!(
+        output.status.success(),
+        "copying an environment failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(cli.stdout(&["get", "A", "--env", "staging"]).trim(), "one");
+    assert_eq!(
+        cli.stdout(&["get", "B", "--env", "staging"]).trim(),
+        "two words"
+    );
+}
+
+#[test]
 fn run_injects_the_secrets_into_a_child_process() {
     let cli = Cli::start("run");
     cli.ready();

@@ -18,42 +18,65 @@ Inspiration: Infisical (project / environment / secret addressing, machine ident
 
 | Container | Technology | Responsibility |
 |---|---|---|
-| `localsecretsd` | Rust, axum 0.8 | HTTP API, authentication, authorisation, seal state, audit |
-| `lsec` | Rust, clap 4 | Command line client, local config, process env injection |
-| SQLite database | file on disk, sqlx 0.8 | Persistence of wrapped keys, users, tokens, ciphertext, audit log |
+| `localsecretsd` | Rust, std::net, thread per connection | HTTP API, authentication, authorisation, seal state, audit |
+| `lsec` | Rust, std only | Command line client, local config, process env injection |
+| Data file | append-only encrypted log on disk | Persistence of wrapped keys, users, tokens, ciphertext, audit records |
 
-Single node. No clustering, no external services.
+Single node. No clustering, no external services, no database engine.
+
+The only third-party code in the whole system is audited cryptography
+(`aes-gcm`, `argon2`, `sha2`, `zeroize`, `subtle`) plus `getrandom`. HTTP,
+storage, JSON, logging, argument parsing and time are written on the standard
+library. See [security.md](security.md) for the reasoning.
 
 ## Components
 
 ### `ls-core` (library, no I/O)
 
-- `crypto::aead` — AES-256-GCM seal/open with associated data.
-- `crypto::shamir` — split and recombine the master key.
+- `crypto::aead` — AES-256-GCM seal/open with canonical associated data.
+- `crypto::shamir` — split and recombine the master key over GF(2^8).
 - `crypto::password` — argon2id hashing and verification.
 - `crypto::token` — opaque token generation and hashing.
+- `encoding` — URL-safe base64 and hex.
+- `random` — the single entropy source; failure is an error, not a panic.
 - `model` — domain types shared across crates.
 
 No database, no network, no filesystem. This is what makes it exhaustively unit-testable.
 
+### `ls-json` (library, no I/O)
+
+Minimal JSON: a `Value` type, a parser that rejects malformed input without
+panicking, and a serialiser. Shared by the server and the CLI.
+
+### `ls-http` (library)
+
+HTTP/1.1 request and response parsing with body size limits, a blocking server
+on `std::net::TcpListener` with a bounded thread pool, and a blocking client for
+the CLI.
+
 ### `ls-store` (library)
 
-- `migrations` — schema, applied at startup.
-- Repository structs over a `SqlitePool`: `BarrierRepo`, `UserRepo`, `TokenRepo`, `ProjectRepo`, `EnvironmentRepo`, `SecretRepo`, `AuditRepo`.
+- `record` — the on-disk format: version byte, length prefix, authenticated payload.
+- `log` — append with fsync, replay on startup, compaction.
+- `index` — the in-memory view rebuilt from the log: users, tokens, projects, environments, secrets.
+
+State is reconstructed by replaying the log at startup. Every write appends and
+fsyncs, so a crash truncates at a record boundary rather than corrupting state.
 
 ### `ls-server` (binary `localsecretsd`)
 
-- `state` — shared app state, including the in-memory root key when unsealed.
-- `middleware::auth` — resolves a bearer token into a `Caller`.
-- `middleware::seal` — rejects secret operations while sealed.
+- `state` — shared state behind a lock, including the in-memory root key when unsealed.
+- `auth` — resolves a bearer token into a `Caller`.
+- `seal` — rejects secret operations while sealed, and guards unseal progress.
 - `routes::sys` — init, unseal, seal, health.
 - `routes::auth` — login, logout, tokens.
 - `routes::projects`, `routes::environments`, `routes::secrets`.
-- `audit` — append-only recording of every secret operation.
+- `audit` — recording of every secret operation.
+- `log` — structured lines to stderr, level from the environment, values never included.
 
 ### `ls-cli` (binary `lsec`)
 
-- `config` — `~/.config/localsecrets/config.toml` plus a `0600` token file, and the `.localsecrets` project pin.
+- `config` — `~/.config/localsecrets/config` plus a `0600` token file, and the `.localsecrets` project pin.
 - `client` — thin HTTP client over the API.
 - `commands` — one module per command group.
 
@@ -77,7 +100,7 @@ Read path: the reverse. Decryption fails closed if the ciphertext was moved to a
 | 1 | Server-side envelope encryption, not end-to-end | Required for a future web UI, rotation and integrations. Same trade-off Infisical made. |
 | 2 | Seal/unseal barrier with Shamir shares | Protects secrets when the process is not running, and forces multi-party recovery after a restart. |
 | 3 | Opaque revocable tokens, not JWTs | Immediate revocation matters more than statelessness on a single node. |
-| 4 | SQLite first | Single binary, no external dependency, fast tests. Queries stay portable for a later Postgres backend. |
+| 4 | Append-only encrypted log, no database engine | Follows from the dependency policy. Crash-safe by construction, and it makes secret history cheap to add later. |
 | 5 | Associated data binds ciphertext to its slot | Prevents a ciphertext being copied between environments to leak a production value into dev. |
 
 ## Deferred

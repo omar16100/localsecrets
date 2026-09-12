@@ -2,4 +2,5 @@
 
 pub mod aead;
 pub mod password;
+pub mod shamir;
 pub mod token;

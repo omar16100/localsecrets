@@ -175,7 +175,7 @@ impl Api {
 
     /// Both unauthenticated system endpoints share one budget.
     fn ceremony_allowed(&self) -> bool {
-        Self::guard(&self.ceremonies).allow("sys")
+        Self::guard(&self.ceremonies).0.allow("sys")
     }
 
     fn init(&self, request: &Request) -> Response {
@@ -332,7 +332,7 @@ impl Api {
         // the limiter has no invariant spanning two operations, and the
         // alternative is that one panic disables the only control standing
         // between a password and an unlimited number of guesses.
-        if !Self::guard(&self.logins).allow(&email) {
+        if !Self::guard(&self.logins).0.allow(&email) {
             ls_log::warn!("login rate limited", email = email);
             return error_response(429, "too many attempts, try again shortly");
         }
@@ -340,7 +340,7 @@ impl Api {
         let mut vault = self.lock();
         match vault.login(&email, &password, SESSION_SECONDS) {
             Ok(token) => {
-                Self::guard(&self.logins).succeeded(&email);
+                Self::guard(&self.logins).0.succeeded(&email);
                 ls_log::info!("login", email = email, outcome = "ok");
                 Response::json(
                     200,
@@ -558,20 +558,25 @@ impl Api {
 
     // --- plumbing ----------------------------------------------------------
 
-    /// Take a lock, recovering it if a panic poisoned it.
-    fn guard<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    /// Take a lock, saying whether it had to be recovered from a panic.
+    ///
+    /// The recovery is reported by the acquisition itself rather than by
+    /// asking beforehand. Asking first looks equivalent and is not: a thread
+    /// can read "not poisoned", block waiting for the lock, and acquire it
+    /// only after the holder has panicked, which is exactly the moment the
+    /// answer needed to be yes.
+    fn guard<T>(lock: &Mutex<T>) -> (std::sync::MutexGuard<'_, T>, bool) {
         match lock.lock() {
-            Ok(guard) => guard,
+            Ok(guard) => (guard, false),
             Err(poisoned) => {
                 lock.clear_poison();
-                poisoned.into_inner()
+                (poisoned.into_inner(), true)
             }
         }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vault> {
-        let poisoned = self.vault.is_poisoned();
-        let mut guard = Self::guard(&self.vault);
+        let (mut guard, poisoned) = Self::guard(&self.vault);
 
         if poisoned {
             // A handler panicked partway through an operation. Memory may now
@@ -737,4 +742,111 @@ fn vault_error(error: &VaultError) -> Response {
         ls_log::error!("request failed", reason = error.to_string());
     }
     error_response(status, &error.to_string())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            let path = std::env::temp_dir().join(format!("ls-api-unit-{label}-{unique}"));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ready_api(label: &str) -> (Scratch, Api) {
+        let scratch = Scratch::new(label);
+        let mut vault = Vault::open(&scratch.0.join("store.log")).unwrap();
+        vault.init(1, 1).unwrap();
+
+        let api = Api {
+            vault: Arc::new(Mutex::new(vault)),
+            logins: Mutex::new(RateLimiter::default()),
+            ceremonies: Mutex::new(RateLimiter::with_budget(CEREMONY_BUDGET)),
+        };
+        (scratch, api)
+    }
+
+    #[test]
+    fn a_panic_while_holding_the_vault_seals_it() {
+        // A panic partway through an operation can leave an event durable in
+        // the log while the state built from it is not. Serving on would mean,
+        // for instance, a revoked token that still works. Sealing forces the
+        // next unseal to rebuild from the file.
+        let (_scratch, api) = ready_api("poison-seals");
+        assert!(!api.lock().is_sealed());
+
+        let vault = Arc::clone(&api.vault);
+        let _ = std::thread::spawn(move || {
+            let _held = vault.lock().unwrap();
+            panic!("a handler exploded mid-operation");
+        })
+        .join();
+
+        assert!(
+            api.lock().is_sealed(),
+            "the vault kept serving after a panic mid-operation"
+        );
+    }
+
+    #[test]
+    fn the_seal_happens_even_when_the_panic_lands_while_we_wait_for_the_lock() {
+        // Asking "is it poisoned?" before taking the lock would miss this: the
+        // answer is no when asked, and yes by the time the lock is held.
+        let (_scratch, api) = ready_api("poison-race");
+        assert!(!api.lock().is_sealed());
+
+        let vault = Arc::clone(&api.vault);
+        let holder = std::thread::spawn(move || {
+            let _held = vault.lock().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            panic!("a handler exploded while another request waited");
+        });
+
+        // Start waiting before the panic happens.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let sealed = api.lock().is_sealed();
+        let _ = holder.join();
+
+        assert!(
+            sealed,
+            "a request that waited through a panic served stale state"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_login_limiter_still_limits() {
+        let (_scratch, api) = ready_api("poison-limiter");
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = api.logins.lock().unwrap();
+            panic!("mid-limit");
+        }));
+
+        let mut refused = false;
+        for _ in 0..40 {
+            if !Api::guard(&api.logins).0.allow("someone@example.com") {
+                refused = true;
+                break;
+            }
+        }
+
+        assert!(refused, "a panic disabled the login rate limit");
+    }
 }

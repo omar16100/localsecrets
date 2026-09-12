@@ -62,6 +62,11 @@
 - [x] token create and revoke, audit
 
 ## M7 — verification
-- [ ] End-to-end live run
-- [ ] Ciphertext-at-rest check, audit check, log redaction check
-- [ ] Docs updated
+- [x] End-to-end live run with the release binaries
+- [x] Ciphertext at rest: no value, key name, email or password readable in the store
+- [x] Log redaction at LS_LOG=debug: no value, password or token in the server log
+- [x] Permissions: store 0600, data dir 0700, token file 0600
+- [x] Restart and unseal with a different pair of shares, state intact
+- [x] Machine token refused on another environment, refusal recorded as denied
+- [x] docs/usage.md written and registered in the index
+- [ ] Apply the findings of the final review

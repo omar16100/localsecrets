@@ -22,3 +22,4 @@ Conventions for this project:
 | [c4model.md](c4model.md) | Architecture | Architecture source of truth: containers, components, data flows |
 | [12092026_localsecrets_plan.md](12092026_localsecrets_plan.md) | Plan | Build plan, milestone status, decisions and deviations |
 | [security.md](security.md) | Reference | Threat model, key hierarchy, what this does and does not protect |
+| [usage.md](usage.md) | Reference | Running the server and using the client day to day |

@@ -410,7 +410,8 @@ fn import(common: &Common, args: &[String]) -> Result<ExitCode, String> {
         Some(Value::object([("secrets", Value::Object(fields))])),
     )?;
 
-    println!("imported {count} secrets into {project}/{environment}");
+    let plural = if count == 1 { "secret" } else { "secrets" };
+    println!("imported {count} {plural} into {project}/{environment}");
     Ok(ExitCode::SUCCESS)
 }
 

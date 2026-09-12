@@ -4,7 +4,12 @@ use ls_core::time::Timestamp;
 use ls_log::{Level, format_line};
 
 fn at(message: &str, fields: &[(&str, String)]) -> String {
-    format_line(Timestamp::from_unix(1_757_635_200), Level::Info, message, fields)
+    format_line(
+        Timestamp::from_unix(1_757_635_200),
+        Level::Info,
+        message,
+        fields,
+    )
 }
 
 #[test]
@@ -28,10 +33,7 @@ fn every_level_has_a_fixed_width_name() {
 fn fields_are_appended_as_key_value_pairs() {
     let line = at(
         "secret read",
-        &[
-            ("project", "demo".to_owned()),
-            ("key", "DB_URL".to_owned()),
-        ],
+        &[("project", "demo".to_owned()), ("key", "DB_URL".to_owned())],
     );
 
     assert_eq!(
@@ -64,8 +66,15 @@ fn a_value_cannot_forge_a_second_log_line() {
         )],
     );
 
-    assert_eq!(line.lines().count(), 1, "value broke out of its line: {line}");
-    assert!(line.contains(r"\n"), "newline should be escaped, got {line}");
+    assert_eq!(
+        line.lines().count(),
+        1,
+        "value broke out of its line: {line}"
+    );
+    assert!(
+        line.contains(r"\n"),
+        "newline should be escaped, got {line}"
+    );
     // The forged text survives, but only inside the quoted value where it is
     // plainly one field of one record rather than a record of its own.
     assert!(

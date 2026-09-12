@@ -328,7 +328,12 @@ fn revoking_a_token_that_does_not_exist_changes_nothing() {
         },
     ]);
 
-    assert!(state.token_by_hash(&[7u8; 32]).unwrap().is_valid_at(at(3_000)));
+    assert!(
+        state
+            .token_by_hash(&[7u8; 32])
+            .unwrap()
+            .is_valid_at(at(3_000))
+    );
 }
 
 #[test]
@@ -363,5 +368,8 @@ fn state_holds_no_plaintext_secret_values() {
 #[test]
 fn debug_output_of_a_sealed_value_does_not_print_it() {
     let rendered = format!("{:?}", sealed(0xCD));
-    assert!(!rendered.contains("cdcdcd"), "sealed value leaked: {rendered}");
+    assert!(
+        !rendered.contains("cdcdcd"),
+        "sealed value leaked: {rendered}"
+    );
 }

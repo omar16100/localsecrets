@@ -67,7 +67,10 @@ fn appended_records_come_back_in_order() {
     log.append(&key(), b"third").unwrap();
 
     let records = log.read_all(&key()).unwrap();
-    assert_eq!(records, vec![b"first".to_vec(), b"second".to_vec(), b"third".to_vec()]);
+    assert_eq!(
+        records,
+        vec![b"first".to_vec(), b"second".to_vec(), b"third".to_vec()]
+    );
     assert_eq!(log.len(), 3);
 }
 
@@ -81,7 +84,10 @@ fn records_survive_closing_and_reopening() {
 
     let mut reopened = Log::open(&dir.file()).unwrap();
 
-    assert_eq!(reopened.read_all(&key()).unwrap(), vec![b"durable".to_vec()]);
+    assert_eq!(
+        reopened.read_all(&key()).unwrap(),
+        vec![b"durable".to_vec()]
+    );
 }
 
 #[test]
@@ -238,10 +244,7 @@ fn a_file_that_is_not_a_log_is_refused() {
     let dir = TempDir::new("not-a-log");
     std::fs::write(dir.file(), b"this is not a localsecrets log at all").unwrap();
 
-    assert!(matches!(
-        Log::open(&dir.file()),
-        Err(StoreError::NotALog)
-    ));
+    assert!(matches!(Log::open(&dir.file()), Err(StoreError::NotALog)));
 }
 
 #[test]
@@ -279,7 +282,8 @@ fn compaction_keeps_the_records_it_is_given_and_drops_the_rest() {
     let mut log = Log::open(&dir.file()).unwrap();
     log.append_plain(b"barrier").unwrap();
     for i in 0..20 {
-        log.append(&key(), format!("record {i}").as_bytes()).unwrap();
+        log.append(&key(), format!("record {i}").as_bytes())
+            .unwrap();
     }
     let before = std::fs::metadata(dir.file()).unwrap().len();
 

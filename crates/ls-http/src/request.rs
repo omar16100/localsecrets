@@ -195,7 +195,9 @@ fn parse_request_line(line: &[u8]) -> Result<(String, String), HttpError> {
 
     let method = parts.next().unwrap_or_default();
     let target = parts.next().ok_or(HttpError::Malformed("missing target"))?;
-    let version = parts.next().ok_or(HttpError::Malformed("missing version"))?;
+    let version = parts
+        .next()
+        .ok_or(HttpError::Malformed("missing version"))?;
     if parts.next().is_some() {
         return Err(HttpError::Malformed("extra words in request line"));
     }
@@ -226,7 +228,9 @@ fn parse_header(line: &[u8]) -> Result<(String, String), HttpError> {
     }
 
     let text = std::str::from_utf8(line).map_err(|_| HttpError::Malformed("header encoding"))?;
-    let colon = text.find(':').ok_or(HttpError::Malformed("header without a colon"))?;
+    let colon = text
+        .find(':')
+        .ok_or(HttpError::Malformed("header without a colon"))?;
 
     let name = &text[..colon];
     if name.is_empty() || !name.bytes().all(is_token_byte) {

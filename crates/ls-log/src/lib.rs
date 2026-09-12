@@ -117,7 +117,10 @@ pub fn emit(level: Level, message: &str, fields: &[(&str, String)]) {
 /// would otherwise be ambiguous.
 fn push_escaped(out: &mut String, text: &str, quote_when_ambiguous: bool) {
     let needs_quotes = quote_when_ambiguous
-        && (text.is_empty() || text.chars().any(|c| c.is_whitespace() || c == '"' || c == '='));
+        && (text.is_empty()
+            || text
+                .chars()
+                .any(|c| c.is_whitespace() || c == '"' || c == '='));
 
     if needs_quotes {
         out.push('"');

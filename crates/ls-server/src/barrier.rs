@@ -36,7 +36,10 @@ impl Barrier {
             ("type", Value::from("barrier")),
             ("threshold", Value::Int(i64::from(self.threshold))),
             ("shares", Value::Int(i64::from(self.shares))),
-            ("root_key_nonce", Value::from(hex::encode(&self.root_key.nonce))),
+            (
+                "root_key_nonce",
+                Value::from(hex::encode(&self.root_key.nonce)),
+            ),
             (
                 "root_key_ciphertext",
                 Value::from(hex::encode(&self.root_key.ciphertext)),

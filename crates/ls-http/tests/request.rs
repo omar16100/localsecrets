@@ -4,7 +4,10 @@ use ls_http::{HttpError, Limits, Request};
 use std::io::Cursor;
 
 fn read(raw: &str) -> Result<Request, HttpError> {
-    Request::read(&mut Cursor::new(raw.as_bytes().to_vec()), &Limits::default())
+    Request::read(
+        &mut Cursor::new(raw.as_bytes().to_vec()),
+        &Limits::default(),
+    )
 }
 
 const GET: &str = "GET /v1/sys/health HTTP/1.1\r\nHost: localhost\r\n\r\n";
@@ -21,7 +24,8 @@ fn reads_a_simple_request() {
 
 #[test]
 fn header_lookup_ignores_case() {
-    let request = read("GET / HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\n\r\n").unwrap();
+    let request =
+        read("GET / HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\n\r\n").unwrap();
 
     assert_eq!(request.header("content-type"), Some("application/json"));
     assert_eq!(request.header("CONTENT-TYPE"), Some("application/json"));
@@ -30,10 +34,9 @@ fn header_lookup_ignores_case() {
 
 #[test]
 fn reads_a_body_of_the_declared_length() {
-    let request = read(
-        "POST /v1/auth/login HTTP/1.1\r\nHost: h\r\nContent-Length: 9\r\n\r\n{\"a\": 1}\n",
-    )
-    .unwrap();
+    let request =
+        read("POST /v1/auth/login HTTP/1.1\r\nHost: h\r\nContent-Length: 9\r\n\r\n{\"a\": 1}\n")
+            .unwrap();
 
     assert_eq!(request.body, b"{\"a\": 1}\n");
 }
@@ -52,7 +55,8 @@ fn a_request_without_content_length_has_no_body() {
 
 #[test]
 fn splits_the_query_string_off_the_path() {
-    let request = read("GET /v1/secrets?env=dev&format=dotenv HTTP/1.1\r\nHost: h\r\n\r\n").unwrap();
+    let request =
+        read("GET /v1/secrets?env=dev&format=dotenv HTTP/1.1\r\nHost: h\r\n\r\n").unwrap();
 
     assert_eq!(request.path, "/v1/secrets");
     assert_eq!(request.query("env"), Some("dev"));
@@ -99,7 +103,8 @@ fn rejects_a_target_that_is_not_an_absolute_path() {
 #[test]
 fn rejects_two_content_length_headers() {
     // Disagreeing lengths are the classic request smuggling primitive.
-    let result = read("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 7\r\n\r\nhello");
+    let result =
+        read("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 7\r\n\r\nhello");
     assert!(matches!(result, Err(HttpError::AmbiguousLength)));
 }
 
@@ -108,7 +113,10 @@ fn rejects_transfer_encoding() {
     // Chunked bodies are not supported, and accepting the header while
     // ignoring it is how smuggling happens.
     let result = read("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
-    assert!(matches!(result, Err(HttpError::UnsupportedTransferEncoding)));
+    assert!(matches!(
+        result,
+        Err(HttpError::UnsupportedTransferEncoding)
+    ));
 }
 
 #[test]
@@ -211,7 +219,8 @@ fn accepts_a_header_with_an_empty_value() {
 
 #[test]
 fn debug_output_of_a_request_does_not_include_the_body() {
-    let request = read("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 17\r\n\r\nsecret-value-here").unwrap();
+    let request =
+        read("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 17\r\n\r\nsecret-value-here").unwrap();
     let rendered = format!("{request:?}");
 
     assert!(
@@ -222,7 +231,8 @@ fn debug_output_of_a_request_does_not_include_the_body() {
 
 #[test]
 fn debug_output_of_a_request_does_not_include_the_authorization_header() {
-    let request = read("GET / HTTP/1.1\r\nHost: h\r\nAuthorization: Bearer lsec_secret\r\n\r\n").unwrap();
+    let request =
+        read("GET / HTTP/1.1\r\nHost: h\r\nAuthorization: Bearer lsec_secret\r\n\r\n").unwrap();
     let rendered = format!("{request:?}");
 
     assert!(

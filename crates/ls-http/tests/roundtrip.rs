@@ -40,7 +40,12 @@ fn a_request_reaches_the_handler_and_the_answer_comes_back() {
     let response = client.get("/v1/sys/health", &[]).unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body_text().unwrap().contains("\"path\":\"/v1/sys/health\""));
+    assert!(
+        response
+            .body_text()
+            .unwrap()
+            .contains("\"path\":\"/v1/sys/health\"")
+    );
     handle.shutdown();
 }
 
@@ -59,9 +64,8 @@ fn a_post_body_arrives_intact() {
 
 #[test]
 fn request_headers_reach_the_handler() {
-    let (handle, client) = serve(|request| {
-        Response::text(200, request.header("authorization").unwrap_or("none"))
-    });
+    let (handle, client) =
+        serve(|request| Response::text(200, request.header("authorization").unwrap_or("none")));
 
     let response = client
         .get("/", &[("authorization", "Bearer lsec_token")])
@@ -226,7 +230,13 @@ fn a_body_over_the_limit_still_gets_its_answer() {
     let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
     let body = vec![b'x'; 4096];
     socket
-        .write_all(format!("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes())
+        .write_all(
+            format!(
+                "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
         .unwrap();
     let _ = socket.write_all(&body);
     let _ = socket.flush();

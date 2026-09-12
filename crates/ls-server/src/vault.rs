@@ -243,8 +243,7 @@ impl Vault {
         let split = shamir::split(master_bytes.as_slice(), threshold, shares)
             .map_err(|_| VaultError::Invalid("share configuration"))?;
 
-        let master_key =
-            DataKey::from_bytes(master_bytes.as_slice()).ok_or(VaultError::Crypto)?;
+        let master_key = DataKey::from_bytes(master_bytes.as_slice()).ok_or(VaultError::Crypto)?;
         let root_key = DataKey::generate().map_err(|_| VaultError::Crypto)?;
         let wrapped = master_key
             .wrap(&root_key, &Barrier::context())
@@ -612,11 +611,7 @@ impl Vault {
             .id
             .clone();
 
-        if self
-            .state
-            .environment_by_slug(&project_id, &slug)
-            .is_some()
-        {
+        if self.state.environment_by_slug(&project_id, &slug).is_some() {
             return Err(VaultError::Conflict("environment"));
         }
 
@@ -681,7 +676,12 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, Capability::WriteSecrets, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(
+            caller,
+            Capability::WriteSecrets,
+            &project_id,
+            &environment_id,
+        ) {
             self.record_audit(caller, "secret.set", &target, "denied")?;
             return Err(error);
         }
@@ -714,7 +714,12 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, Capability::ReadSecrets, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(
+            caller,
+            Capability::ReadSecrets,
+            &project_id,
+            &environment_id,
+        ) {
             self.record_audit(caller, "secret.read", &target, "denied")?;
             return Err(error);
         }
@@ -749,7 +754,12 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}");
 
-        if let Err(error) = self.authorise(caller, Capability::ReadSecrets, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(
+            caller,
+            Capability::ReadSecrets,
+            &project_id,
+            &environment_id,
+        ) {
             self.record_audit(caller, "secret.list", &target, "denied")?;
             return Err(error);
         }
@@ -789,12 +799,21 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, Capability::WriteSecrets, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(
+            caller,
+            Capability::WriteSecrets,
+            &project_id,
+            &environment_id,
+        ) {
             self.record_audit(caller, "secret.delete", &target, "denied")?;
             return Err(error);
         }
 
-        if self.state.secret(&project_id, &environment_id, key).is_none() {
+        if self
+            .state
+            .secret(&project_id, &environment_id, key)
+            .is_none()
+        {
             return Err(VaultError::NotFound("secret"));
         }
 
@@ -933,7 +952,10 @@ impl Vault {
             .ok_or(VaultError::NotFound("project"))?;
 
         root_key
-            .unwrap_key(&(&project.data_key).into(), &project_key_context(project_id))
+            .unwrap_key(
+                &(&project.data_key).into(),
+                &project_key_context(project_id),
+            )
             .map_err(|_| VaultError::Crypto)
     }
 }

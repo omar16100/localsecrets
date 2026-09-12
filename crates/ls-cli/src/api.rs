@@ -48,7 +48,12 @@ impl Api {
         let response = self
             .client
             .send(method, path, &headers, rendered.as_bytes())
-            .map_err(|e| format!("could not reach the server at {}: {e}", self.client.address()))?;
+            .map_err(|e| {
+                format!(
+                    "could not reach the server at {}: {e}",
+                    self.client.address()
+                )
+            })?;
 
         let text = response.body_text().unwrap_or("").trim();
         let value = if text.is_empty() {

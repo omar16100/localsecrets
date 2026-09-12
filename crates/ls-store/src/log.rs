@@ -239,7 +239,11 @@ impl Log {
         // Past this point a failure may have left part of a record on disk, so
         // the count is no longer reliable and nothing more may be appended
         // until the log is reopened and rescanned.
-        if let Err(error) = self.file.write_all(&framed).and_then(|()| self.file.sync_data()) {
+        if let Err(error) = self
+            .file
+            .write_all(&framed)
+            .and_then(|()| self.file.sync_data())
+        {
             self.broken = true;
             return Err(StoreError::Io(error));
         }
@@ -266,7 +270,8 @@ fn open_private(path: &Path) -> Result<File, StoreError> {
 fn check_header(file: &mut File) -> Result<(), StoreError> {
     file.seek(SeekFrom::Start(0))?;
     let mut header = [0u8; HEADER_LEN];
-    file.read_exact(&mut header).map_err(|_| StoreError::NotALog)?;
+    file.read_exact(&mut header)
+        .map_err(|_| StoreError::NotALog)?;
 
     if &header[..MAGIC.len()] != MAGIC {
         return Err(StoreError::NotALog);
@@ -318,7 +323,9 @@ where
     let mut reader = BufReader::new(file);
 
     let mut header = [0u8; HEADER_LEN];
-    reader.read_exact(&mut header).map_err(|_| StoreError::NotALog)?;
+    reader
+        .read_exact(&mut header)
+        .map_err(|_| StoreError::NotALog)?;
 
     let mut sequence = 0usize;
     let mut length_bytes = [0u8; 4];

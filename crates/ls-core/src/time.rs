@@ -81,9 +81,7 @@ impl Timestamp {
         }
 
         let days = days_from_civil(year, month as u32, day as u32);
-        Some(Self(
-            days * 86_400 + hour * 3_600 + minute * 60 + second,
-        ))
+        Some(Self(days * 86_400 + hour * 3_600 + minute * 60 + second))
     }
 }
 

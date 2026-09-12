@@ -114,9 +114,7 @@ pub fn verify(password: &str, stored: &str) -> bool {
         return false;
     }
     match argon2() {
-        Ok(hasher) => hasher
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok(),
+        Ok(hasher) => hasher.verify_password(password.as_bytes(), &parsed).is_ok(),
         Err(_) => false,
     }
 }

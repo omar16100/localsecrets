@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Check the dependency policy
+        run: |
+          # Only audited cryptography is allowed as a third-party dependency.
+          # Everything else is written on the standard library.
+          allowed='^(aead|aes|aes-gcm|argon2|base64ct|blake2|block-buffer|cfg-if|cipher|cmov|cpubits|cpufeatures|crypto-common|ctr|ctutils|digest|generic-array|getrandom|ghash|hybrid-array|inout|libc|password-hash|phc|polyval|proc-macro2|quote|r-efi|sha2|subtle|syn|typenum|unicode-ident|universal-hash|version_check|wasip2|wit-bindgen|zeroize|zeroize_derive|ls-.*)$'
+          unexpected=$(grep '^name = ' Cargo.lock | sed 's/name = //; s/"//g' | grep -Ev "$allowed" || true)
+          if [ -n "$unexpected" ]; then
+            echo "Dependencies outside the policy in docs/security.md:"
+            echo "$unexpected"
+            exit 1
+          fi
+          echo "Dependency policy holds."

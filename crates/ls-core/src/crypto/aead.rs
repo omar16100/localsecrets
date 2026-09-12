@@ -10,9 +10,9 @@
 //! project at human write rates stays far below that. If a key ever approaches
 //! it, the answer is rotation, not a larger nonce.
 
+use crate::random::{self, EntropyError};
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
-use crate::random::{self, EntropyError};
 use zeroize::Zeroize as _;
 
 /// Key length in bytes.

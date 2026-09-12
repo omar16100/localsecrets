@@ -222,7 +222,8 @@ impl Event {
 
     /// Read back from storage.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, StoreError> {
-        let text = std::str::from_utf8(bytes).map_err(|_| StoreError::MalformedEvent("not UTF-8"))?;
+        let text =
+            std::str::from_utf8(bytes).map_err(|_| StoreError::MalformedEvent("not UTF-8"))?;
         let value = parse(text).map_err(|_| StoreError::MalformedEvent("not JSON"))?;
         Self::from_value(&value)
     }

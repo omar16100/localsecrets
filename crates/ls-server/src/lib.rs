@@ -14,6 +14,4 @@ mod vault;
 
 pub use api::handler;
 
-pub use vault::{
-    AuditEntry, Caller, InitOutcome, RevealedSecret, UnsealStatus, Vault, VaultError,
-};
+pub use vault::{AuditEntry, Caller, InitOutcome, RevealedSecret, UnsealStatus, Vault, VaultError};

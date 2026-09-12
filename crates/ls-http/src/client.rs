@@ -120,10 +120,7 @@ impl Client {
     }
 }
 
-fn read_response<R: BufRead>(
-    reader: &mut R,
-    limits: &Limits,
-) -> Result<ClientResponse, HttpError> {
+fn read_response<R: BufRead>(reader: &mut R, limits: &Limits) -> Result<ClientResponse, HttpError> {
     let mut line = String::new();
     read_line(reader, &mut line, limits)?;
 
@@ -188,7 +185,9 @@ fn read_line<R: BufRead>(
     limits: &Limits,
 ) -> Result<(), HttpError> {
     let mut raw = Vec::new();
-    let read = reader.take(limits.max_head as u64).read_until(b'\n', &mut raw)?;
+    let read = reader
+        .take(limits.max_head as u64)
+        .read_until(b'\n', &mut raw)?;
     if read == 0 {
         return Err(HttpError::Incomplete);
     }

@@ -24,7 +24,10 @@ fn renders_numbers_without_losing_integer_precision() {
 #[test]
 fn renders_a_float_that_happens_to_be_whole_as_valid_json() {
     let rendered = Value::Float(2.0).to_string();
-    assert!(parse(&rendered).is_ok(), "produced invalid JSON: {rendered}");
+    assert!(
+        parse(&rendered).is_ok(),
+        "produced invalid JSON: {rendered}"
+    );
 }
 
 #[test]
@@ -81,7 +84,10 @@ fn everything_it_renders_can_be_parsed_back() {
         ("bool", Value::Bool(false)),
         ("int", Value::Int(-9_007_199_254_740_993)),
         ("float", Value::Float(0.1)),
-        ("tricky", Value::from("quote \" backslash \\ newline \n tab \t")),
+        (
+            "tricky",
+            Value::from("quote \" backslash \\ newline \n tab \t"),
+        ),
         ("control", Value::from("\u{0}\u{1f}")),
         ("unicode", Value::from("日本語 😀")),
         (
@@ -91,7 +97,11 @@ fn everything_it_renders_can_be_parsed_back() {
     ]);
 
     let rendered = value.to_string();
-    assert_eq!(parse(&rendered).unwrap(), value, "round trip failed for {rendered}");
+    assert_eq!(
+        parse(&rendered).unwrap(),
+        value,
+        "round trip failed for {rendered}"
+    );
 }
 
 #[test]

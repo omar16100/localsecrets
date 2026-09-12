@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use ls_core::crypto::shamir::{self, Share, ShamirError};
+use ls_core::crypto::shamir::{self, ShamirError, Share};
 
 const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -95,7 +95,9 @@ fn a_threshold_of_one_makes_every_share_the_secret() {
     let shares = shamir::split(SECRET, 1, 3).unwrap();
     for share in &shares {
         assert_eq!(
-            shamir::combine(std::slice::from_ref(share)).unwrap().as_slice(),
+            shamir::combine(std::slice::from_ref(share))
+                .unwrap()
+                .as_slice(),
             SECRET
         );
     }
@@ -261,7 +263,10 @@ fn debug_output_never_prints_share_data() {
     let shares = shamir::split(SECRET, 3, 5).unwrap();
     let rendered = format!("{:?}", shares[0]);
     let payload = ls_core::encoding::hex::encode(shares[0].data());
-    assert!(!rendered.contains(&payload), "share leaked via Debug: {rendered}");
+    assert!(
+        !rendered.contains(&payload),
+        "share leaked via Debug: {rendered}"
+    );
 }
 
 #[test]
@@ -269,7 +274,10 @@ fn shares_at_the_highest_indexes_still_interpolate() {
     let shares = shamir::split(SECRET, 3, 255).unwrap();
     let top: Vec<Share> = shares[252..].to_vec();
 
-    assert_eq!(top.iter().map(Share::index).collect::<Vec<_>>(), vec![253, 254, 255]);
+    assert_eq!(
+        top.iter().map(Share::index).collect::<Vec<_>>(),
+        vec![253, 254, 255]
+    );
     assert_eq!(shamir::combine(&top).unwrap().as_slice(), SECRET);
 }
 

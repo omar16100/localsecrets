@@ -9,9 +9,9 @@ use crate::{HttpError, Limits, Request, Response};
 use std::io::{BufReader, Read as _, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::Mutex;
 use std::time::Duration;
 
 /// How long a connection may take to deliver its request before it is dropped.

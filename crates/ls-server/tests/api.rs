@@ -82,7 +82,11 @@ impl Harness {
             .iter()
             .map(|v| v.as_str().unwrap().to_owned())
             .collect();
-        let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+        let root = body
+            .get("root_token")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
 
         let (status, body) = self.post(
             "/v1/users",
@@ -97,7 +101,11 @@ impl Harness {
             r#"{"email":"dev@example.com","password":"correct horse battery staple"}"#,
         );
         assert_eq!(status, 200, "login failed: {body}");
-        let session = body.get("token").and_then(Value::as_str).unwrap().to_owned();
+        let session = body
+            .get("token")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
 
         (shares, session)
     }
@@ -140,7 +148,10 @@ fn health_reports_a_fresh_server_as_sealed_and_uninitialised() {
 
     assert_eq!(status, 200);
     assert_eq!(body.get("sealed").and_then(Value::as_bool), Some(true));
-    assert_eq!(body.get("initialized").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        body.get("initialized").and_then(Value::as_bool),
+        Some(false)
+    );
     assert!(body.get("version").is_some());
 }
 
@@ -159,7 +170,10 @@ fn initialising_returns_the_shares_once_and_refuses_a_second_time() {
 
     let (status, body) = api.post("/v1/sys/init", None, r#"{"threshold":2,"shares":3}"#);
     assert_eq!(status, 200);
-    assert_eq!(body.get("shares").and_then(Value::as_array).unwrap().len(), 3);
+    assert_eq!(
+        body.get("shares").and_then(Value::as_array).unwrap().len(),
+        3
+    );
 
     let (status, _) = api.post("/v1/sys/init", None, r#"{"threshold":2,"shares":3}"#);
     assert_eq!(status, 409);
@@ -202,7 +216,11 @@ fn an_unseal_attempt_can_be_abandoned() {
     let api = Harness::start("unseal-reset");
     let (shares, session) = api.ready();
     api.post("/v1/sys/seal", Some(&session), "");
-    api.post("/v1/sys/unseal", None, &format!(r#"{{"share":"{}"}}"#, shares[0]));
+    api.post(
+        "/v1/sys/unseal",
+        None,
+        &format!(r#"{{"share":"{}"}}"#, shares[0]),
+    );
 
     let (status, _) = api.post("/v1/sys/unseal", None, r#"{"reset":true}"#);
     assert_eq!(status, 200);
@@ -231,7 +249,11 @@ fn a_bad_share_is_a_bad_request() {
 fn the_first_user_needs_the_root_token() {
     let api = Harness::start("first-user");
     let (_, body) = api.post("/v1/sys/init", None, r#"{"threshold":1,"shares":1}"#);
-    let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+    let root = body
+        .get("root_token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
 
     let unauthenticated = api.post(
         "/v1/users",
@@ -366,11 +388,13 @@ fn a_secret_can_be_written_read_listed_and_deleted() {
     );
 
     assert_eq!(
-        api.delete("/v1/projects/demo/envs/dev/secrets/DB_URL", Some(&session)).0,
+        api.delete("/v1/projects/demo/envs/dev/secrets/DB_URL", Some(&session))
+            .0,
         204
     );
     assert_eq!(
-        api.get("/v1/projects/demo/envs/dev/secrets/DB_URL", Some(&session)).0,
+        api.get("/v1/projects/demo/envs/dev/secrets/DB_URL", Some(&session))
+            .0,
         404
     );
 }
@@ -401,7 +425,11 @@ fn a_value_with_awkward_characters_survives_the_round_trip() {
     let awkward = "line1\nline2\t\"quoted\" \\ backslash 日本語 😀";
     let body = Value::object([("value", Value::from(awkward))]).to_string();
 
-    api.put("/v1/projects/demo/envs/dev/secrets/ODD", Some(&session), &body);
+    api.put(
+        "/v1/projects/demo/envs/dev/secrets/ODD",
+        Some(&session),
+        &body,
+    );
 
     let (_, got) = api.get("/v1/projects/demo/envs/dev/secrets/ODD", Some(&session));
     assert_eq!(got.get("value").and_then(Value::as_str), Some(awkward));
@@ -412,10 +440,19 @@ fn an_unknown_project_environment_or_secret_is_not_found() {
     let api = Harness::start("missing");
     let session = api.with_project();
 
-    assert_eq!(api.get("/v1/projects/nope/envs/dev/secrets", Some(&session)).0, 404);
-    assert_eq!(api.get("/v1/projects/demo/envs/nope/secrets", Some(&session)).0, 404);
     assert_eq!(
-        api.get("/v1/projects/demo/envs/dev/secrets/NOPE", Some(&session)).0,
+        api.get("/v1/projects/nope/envs/dev/secrets", Some(&session))
+            .0,
+        404
+    );
+    assert_eq!(
+        api.get("/v1/projects/demo/envs/nope/secrets", Some(&session))
+            .0,
+        404
+    );
+    assert_eq!(
+        api.get("/v1/projects/demo/envs/dev/secrets/NOPE", Some(&session))
+            .0,
         404
     );
 }
@@ -448,14 +485,19 @@ fn a_machine_token_reads_its_own_environment_and_no_other() {
         r#"{"project":"demo","environment":"dev","label":"ci"}"#,
     );
     assert_eq!(status, 201, "{body}");
-    let machine = body.get("token").and_then(Value::as_str).unwrap().to_owned();
+    let machine = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
 
     let (status, body) = api.get("/v1/projects/demo/envs/dev/secrets/K", Some(&machine));
     assert_eq!(status, 200);
     assert_eq!(body.get("value").and_then(Value::as_str), Some("dev value"));
 
     assert_eq!(
-        api.get("/v1/projects/demo/envs/prod/secrets/K", Some(&machine)).0,
+        api.get("/v1/projects/demo/envs/prod/secrets/K", Some(&machine))
+            .0,
         403,
         "a dev token reached production"
     );
@@ -470,12 +512,27 @@ fn a_machine_token_can_be_revoked() {
         Some(&session),
         r#"{"project":"demo","environment":"dev","label":"ci"}"#,
     );
-    let machine = body.get("token").and_then(Value::as_str).unwrap().to_owned();
+    let machine = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
     let id = body.get("id").and_then(Value::as_str).unwrap().to_owned();
 
-    assert_eq!(api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine)).0, 200);
-    assert_eq!(api.delete(&format!("/v1/tokens/{id}"), Some(&session)).0, 204);
-    assert_eq!(api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine)).0, 401);
+    assert_eq!(
+        api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine))
+            .0,
+        200
+    );
+    assert_eq!(
+        api.delete(&format!("/v1/tokens/{id}"), Some(&session)).0,
+        204
+    );
+    assert_eq!(
+        api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine))
+            .0,
+        401
+    );
 }
 
 // --- audit and errors ------------------------------------------------------
@@ -497,7 +554,10 @@ fn the_audit_trail_records_reads_and_writes_without_values() {
     let rendered = body.to_string();
     assert!(rendered.contains("secret.set"), "{rendered}");
     assert!(rendered.contains("secret.read"), "{rendered}");
-    assert!(!rendered.contains("postgres://secret"), "a value reached the audit trail");
+    assert!(
+        !rendered.contains("postgres://secret"),
+        "a value reached the audit trail"
+    );
 }
 
 #[test]
@@ -523,11 +583,13 @@ fn a_body_that_is_not_json_is_a_bad_request() {
     let (_, session) = api.ready();
 
     assert_eq!(
-        api.post("/v1/projects", Some(&session), "not json at all").0,
+        api.post("/v1/projects", Some(&session), "not json at all")
+            .0,
         400
     );
     assert_eq!(
-        api.post("/v1/projects", Some(&session), r#"{"name":"no slug"}"#).0,
+        api.post("/v1/projects", Some(&session), r#"{"name":"no slug"}"#)
+            .0,
         400
     );
 }
@@ -563,7 +625,10 @@ fn machine_token(api: &Harness) -> String {
         r#"{"project":"demo","environment":"dev","label":"ci"}"#,
     );
     assert_eq!(status, 201, "{body}");
-    body.get("token").and_then(Value::as_str).unwrap().to_owned()
+    body.get("token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned()
 }
 
 #[test]
@@ -588,7 +653,12 @@ fn a_machine_token_cannot_create_projects_or_environments() {
     let machine = machine_token(&api);
 
     assert_eq!(
-        api.post("/v1/projects", Some(&machine), r#"{"slug":"mine","name":"Mine"}"#).0,
+        api.post(
+            "/v1/projects",
+            Some(&machine),
+            r#"{"slug":"mine","name":"Mine"}"#
+        )
+        .0,
         403
     );
     assert_eq!(
@@ -639,7 +709,11 @@ fn a_machine_token_reads_but_cannot_write_or_delete() {
     let api = Harness::start("machine-read-only");
     let machine = machine_token(&api);
 
-    assert_eq!(api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine)).0, 200);
+    assert_eq!(
+        api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine))
+            .0,
+        200
+    );
     assert_eq!(
         api.put(
             "/v1/projects/demo/envs/dev/secrets/K",
@@ -650,7 +724,8 @@ fn a_machine_token_reads_but_cannot_write_or_delete() {
         403
     );
     assert_eq!(
-        api.delete("/v1/projects/demo/envs/dev/secrets/K", Some(&machine)).0,
+        api.delete("/v1/projects/demo/envs/dev/secrets/K", Some(&machine))
+            .0,
         403
     );
 }
@@ -659,7 +734,11 @@ fn a_machine_token_reads_but_cannot_write_or_delete() {
 fn the_root_token_is_spent_by_creating_the_first_account() {
     let api = Harness::start("root-spent");
     let (_, body) = api.post("/v1/sys/init", None, r#"{"threshold":1,"shares":1}"#);
-    let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+    let root = body
+        .get("root_token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
 
     assert_eq!(
         api.post(
@@ -687,10 +766,19 @@ fn the_root_token_is_spent_by_creating_the_first_account() {
 fn the_root_token_cannot_do_anything_but_create_the_first_account() {
     let api = Harness::start("root-narrow");
     let (_, body) = api.post("/v1/sys/init", None, r#"{"threshold":1,"shares":1}"#);
-    let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+    let root = body
+        .get("root_token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
 
     assert_eq!(
-        api.post("/v1/projects", Some(&root), r#"{"slug":"demo","name":"Demo"}"#).0,
+        api.post(
+            "/v1/projects",
+            Some(&root),
+            r#"{"slug":"demo","name":"Demo"}"#
+        )
+        .0,
         403
     );
     assert_eq!(api.get("/v1/audit", Some(&root)).0, 403);

@@ -449,7 +449,10 @@ fn a_machine_token_can_be_issued_and_used() {
     let output = cli.run(&["get", "K", "--token", &token]);
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "machine readable");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "machine readable"
+    );
 }
 
 #[test]
@@ -463,7 +466,12 @@ fn the_token_file_is_not_readable_by_anyone_else() {
         let token_file = cli.dir.join(".config/localsecrets/token");
         assert!(token_file.exists(), "login should cache a token");
         let mode = std::fs::metadata(&token_file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "token file mode was {:o}", mode & 0o777);
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "token file mode was {:o}",
+            mode & 0o777
+        );
     }
 }
 
@@ -491,5 +499,8 @@ fn a_failed_command_never_prints_a_value_it_was_carrying() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!all.contains("do-not-echo-me"), "the value was echoed: {all}");
+    assert!(
+        !all.contains("do-not-echo-me"),
+        "the value was echoed: {all}"
+    );
 }

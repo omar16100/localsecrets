@@ -16,7 +16,11 @@ const B64_VECTORS: &[(&str, &str)] = &[
 #[test]
 fn base64url_matches_the_rfc_4648_vectors() {
     for (plain, encoded) in B64_VECTORS {
-        assert_eq!(b64::encode(plain.as_bytes()), *encoded, "encoding {plain:?}");
+        assert_eq!(
+            b64::encode(plain.as_bytes()),
+            *encoded,
+            "encoding {plain:?}"
+        );
     }
 }
 
@@ -58,7 +62,10 @@ fn base64url_round_trips_every_length_up_to_a_block_boundary() {
 fn base64url_rejects_characters_outside_the_alphabet() {
     assert!(b64::decode("Zm9v!").is_none());
     assert!(b64::decode("Zm9 v").is_none());
-    assert!(b64::decode("Zm+v").is_none(), "standard alphabet is not accepted");
+    assert!(
+        b64::decode("Zm+v").is_none(),
+        "standard alphabet is not accepted"
+    );
     assert!(b64::decode("Zm/v").is_none());
 }
 
@@ -74,12 +81,18 @@ fn base64url_rejects_non_canonical_final_groups() {
     // spelling, so a checksum over the decoded bytes cannot detect an edit to
     // the spelling.
     assert_eq!(b64::decode("Zg").unwrap(), b"f");
-    assert!(b64::decode("Zh").is_none(), "non-canonical two-character group");
+    assert!(
+        b64::decode("Zh").is_none(),
+        "non-canonical two-character group"
+    );
     assert!(b64::decode("Zi").is_none());
     assert!(b64::decode("Zv").is_none());
 
     assert_eq!(b64::decode("Zm8").unwrap(), b"fo");
-    assert!(b64::decode("Zm9").is_none(), "non-canonical three-character group");
+    assert!(
+        b64::decode("Zm9").is_none(),
+        "non-canonical three-character group"
+    );
     assert!(b64::decode("Zm-").is_none());
     assert!(b64::decode("Zm_").is_none());
 }
@@ -104,7 +117,10 @@ fn every_encoded_value_is_the_only_spelling_of_itself() {
             chars[last] = original;
 
             if let Some(decoded) = b64::decode(&candidate) {
-                assert_ne!(decoded, data, "{candidate} is a second spelling of {data:?}");
+                assert_ne!(
+                    decoded, data,
+                    "{candidate} is a second spelling of {data:?}"
+                );
             }
         }
     }
@@ -131,7 +147,10 @@ fn hex_round_trips_every_byte_value() {
 
 #[test]
 fn hex_accepts_uppercase_input() {
-    assert_eq!(hex::decode("000FA5FF").unwrap(), vec![0x00, 0x0f, 0xa5, 0xff]);
+    assert_eq!(
+        hex::decode("000FA5FF").unwrap(),
+        vec![0x00, 0x0f, 0xa5, 0xff]
+    );
 }
 
 #[test]

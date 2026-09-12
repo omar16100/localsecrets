@@ -42,7 +42,10 @@ fn declares_the_length_in_bytes_not_characters() {
 #[test]
 fn json_responses_carry_a_json_content_type() {
     let out = rendered(&Response::json(200, "{\"a\":1}"));
-    assert!(out.contains("content-type: application/json\r\n"), "got {out}");
+    assert!(
+        out.contains("content-type: application/json\r\n"),
+        "got {out}"
+    );
     assert!(out.ends_with("\r\n\r\n{\"a\":1}"), "got {out}");
 }
 
@@ -68,8 +71,14 @@ fn a_header_value_cannot_inject_another_header() {
     let response = Response::text(200, "x").header("x-thing", "a\r\nX-Injected: yes");
     let out = rendered(&response);
 
-    assert!(!out.contains("X-Injected"), "header injection succeeded: {out}");
-    assert!(!out.contains("x-injected"), "header injection succeeded: {out}");
+    assert!(
+        !out.contains("X-Injected"),
+        "header injection succeeded: {out}"
+    );
+    assert!(
+        !out.contains("x-injected"),
+        "header injection succeeded: {out}"
+    );
 }
 
 #[test]
@@ -77,7 +86,10 @@ fn a_header_name_cannot_inject_another_header() {
     let response = Response::text(200, "x").header("x-thing\r\nX-Injected", "yes");
     let out = rendered(&response);
 
-    assert!(!out.contains("X-Injected"), "header injection succeeded: {out}");
+    assert!(
+        !out.contains("X-Injected"),
+        "header injection succeeded: {out}"
+    );
 }
 
 #[test]

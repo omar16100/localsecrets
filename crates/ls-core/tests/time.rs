@@ -68,17 +68,61 @@ fn rejects_text_that_is_not_a_timestamp() {
     assert_eq!(Timestamp::parse_rfc3339(""), None);
     assert_eq!(Timestamp::parse_rfc3339("not a time"), None);
     assert_eq!(Timestamp::parse_rfc3339("2026-09-12"), None);
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12T00:00:00"), None, "no zone");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12 00:00:00Z"), None, "no T");
-    assert_eq!(Timestamp::parse_rfc3339("2026-13-01T00:00:00Z"), None, "month 13");
-    assert_eq!(Timestamp::parse_rfc3339("2026-00-01T00:00:00Z"), None, "month 0");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-31T00:00:00Z"), None, "31 September");
-    assert_eq!(Timestamp::parse_rfc3339("2025-02-29T00:00:00Z"), None, "not a leap year");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12T24:00:00Z"), None, "hour 24");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12T00:60:00Z"), None, "minute 60");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12T00:00:60Z"), None, "second 60");
-    assert_eq!(Timestamp::parse_rfc3339("2026-9-12T00:00:00Z"), None, "unpadded");
-    assert_eq!(Timestamp::parse_rfc3339("2026-09-12T00:00:00Z "), None, "trailing space");
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12T00:00:00"),
+        None,
+        "no zone"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12 00:00:00Z"),
+        None,
+        "no T"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-13-01T00:00:00Z"),
+        None,
+        "month 13"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-00-01T00:00:00Z"),
+        None,
+        "month 0"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-31T00:00:00Z"),
+        None,
+        "31 September"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2025-02-29T00:00:00Z"),
+        None,
+        "not a leap year"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12T24:00:00Z"),
+        None,
+        "hour 24"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12T00:60:00Z"),
+        None,
+        "minute 60"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12T00:00:60Z"),
+        None,
+        "second 60"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-9-12T00:00:00Z"),
+        None,
+        "unpadded"
+    );
+    assert_eq!(
+        Timestamp::parse_rfc3339("2026-09-12T00:00:00Z "),
+        None,
+        "trailing space"
+    );
 }
 
 #[test]

@@ -116,7 +116,10 @@ fn unseal(common: &Common, args: &[String]) -> Result<ExitCode, String> {
         Some(Value::object([("share", Value::from(share.trim()))])),
     )?;
 
-    let sealed = answer.get("sealed").and_then(Value::as_bool).unwrap_or(true);
+    let sealed = answer
+        .get("sealed")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let progress = answer.get("progress").and_then(Value::as_i64).unwrap_or(0);
     let threshold = answer.get("threshold").and_then(Value::as_i64).unwrap_or(0);
 
@@ -139,7 +142,10 @@ fn seal(common: &Common) -> Result<ExitCode, String> {
 fn status(common: &Common) -> Result<ExitCode, String> {
     let answer = common.connect()?.call("GET", "/v1/sys/health", None)?;
 
-    let sealed = answer.get("sealed").and_then(Value::as_bool).unwrap_or(true);
+    let sealed = answer
+        .get("sealed")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let initialized = answer
         .get("initialized")
         .and_then(Value::as_bool)
@@ -301,9 +307,11 @@ fn create_environment(common: &Common, args: &[String]) -> Result<ExitCode, Stri
 
 fn list_environments(common: &Common) -> Result<ExitCode, String> {
     let project = common.project()?;
-    let answer = common
-        .connect_authenticated()?
-        .call("GET", &format!("/v1/projects/{project}/envs"), None)?;
+    let answer = common.connect_authenticated()?.call(
+        "GET",
+        &format!("/v1/projects/{project}/envs"),
+        None,
+    )?;
     print_list(&answer, "environments");
     Ok(ExitCode::SUCCESS)
 }
@@ -471,9 +479,10 @@ fn create_token(common: &Common, args: &[String]) -> Result<ExitCode, String> {
         body.push(("ttl_seconds", Value::Int(ttl)));
     }
 
-    let answer = common
-        .connect_authenticated()?
-        .call("POST", "/v1/tokens", Some(Value::object(body)))?;
+    let answer =
+        common
+            .connect_authenticated()?
+            .call("POST", "/v1/tokens", Some(Value::object(body)))?;
 
     println!("token: {}", field(&answer, "token")?);
     println!("id:    {}", field(&answer, "id")?);

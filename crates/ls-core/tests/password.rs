@@ -84,7 +84,10 @@ aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
 #[test]
 fn verify_accepts_a_hash_produced_at_the_configured_parameters() {
     let stored = password::hash("correct horse battery staple").unwrap();
-    assert!(stored.contains("m=19456,t=2,p=1"), "unexpected params: {stored}");
+    assert!(
+        stored.contains("m=19456,t=2,p=1"),
+        "unexpected params: {stored}"
+    );
     assert!(password::verify("correct horse battery staple", &stored));
 }
 

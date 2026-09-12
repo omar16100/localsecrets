@@ -18,10 +18,10 @@ mod event;
 mod log;
 mod state;
 
+pub use StoreError as Error;
 pub use event::{Event, Sealed, TokenKind};
 pub use log::{Log, Record};
 pub use state::{Environment, Project, Secret, State, Token, User};
-pub use StoreError as Error;
 
 /// Bytes of file header: magic plus a format version.
 pub const HEADER_LEN: usize = 8;
@@ -75,9 +75,7 @@ impl std::fmt::Display for StoreError {
             }
             Self::Crypto => f.write_str("could not encrypt a record"),
             Self::MalformedEvent(what) => write!(f, "record is not a usable event: {what}"),
-            Self::Broken => {
-                f.write_str("an earlier write failed; the store must be reopened")
-            }
+            Self::Broken => f.write_str("an earlier write failed; the store must be reopened"),
             Self::Io(e) => write!(f, "store file failed: {e}"),
         }
     }

@@ -80,7 +80,10 @@ fn another_key_cannot_open_it() {
 fn a_ciphertext_moved_to_another_environment_will_not_open() {
     let key = DataKey::generate().unwrap();
     let sealed = key
-        .seal(b"production password", &Aad::secret_slot("p", "prod", "DB_PW"))
+        .seal(
+            b"production password",
+            &Aad::secret_slot("p", "prod", "DB_PW"),
+        )
         .unwrap();
 
     let moved = key.open(&sealed, &Aad::secret_slot("p", "dev", "DB_PW"));
@@ -124,7 +127,9 @@ fn context_fields_cannot_be_confused_by_shifting_a_boundary() {
 #[test]
 fn contexts_for_different_purposes_never_collide() {
     let key = DataKey::generate().unwrap();
-    let sealed = key.seal(b"value", &Aad::key_wrap("project-dek", "p1")).unwrap();
+    let sealed = key
+        .seal(b"value", &Aad::key_wrap("project-dek", "p1"))
+        .unwrap();
 
     assert!(matches!(
         key.open(&sealed, &Aad::secret_slot("project-dek", "p1", "")),
@@ -181,7 +186,9 @@ fn a_wrapped_key_cannot_be_transplanted_to_another_project() {
     let root = DataKey::generate().unwrap();
     let dek = DataKey::generate().unwrap();
 
-    let wrapped = root.wrap(&dek, &Aad::key_wrap("project-dek", "p1")).unwrap();
+    let wrapped = root
+        .wrap(&dek, &Aad::key_wrap("project-dek", "p1"))
+        .unwrap();
 
     assert!(matches!(
         root.unwrap_key(&wrapped, &Aad::key_wrap("project-dek", "p2")),
@@ -230,7 +237,10 @@ fn a_nonce_of_the_wrong_size_is_rejected_instead_of_panicking() {
         ciphertext: vec![0u8; 32],
     };
 
-    assert!(matches!(key.open(&broken, &slot()), Err(AeadError::Decrypt)));
+    assert!(matches!(
+        key.open(&broken, &slot()),
+        Err(AeadError::Decrypt)
+    ));
 }
 
 #[test]
@@ -238,7 +248,10 @@ fn debug_output_never_prints_key_material() {
     let key = DataKey::from_bytes(&[0xab; 32]).unwrap();
     let rendered = format!("{key:?}");
 
-    assert!(!rendered.contains("abab"), "key leaked via Debug: {rendered}");
+    assert!(
+        !rendered.contains("abab"),
+        "key leaked via Debug: {rendered}"
+    );
     assert_eq!(rendered, "DataKey([redacted; 32])");
 }
 
@@ -251,7 +264,8 @@ fn associated_data_stays_unambiguous_for_long_fields() {
     let sealed = key.seal(b"v", &Aad::secret_slot("p", "e", &long)).unwrap();
 
     assert!(
-        key.open(&sealed, &Aad::secret_slot("p", "e", &long)).is_ok()
+        key.open(&sealed, &Aad::secret_slot("p", "e", &long))
+            .is_ok()
     );
     assert!(matches!(
         key.open(&sealed, &Aad::secret_slot("p", "e", &"n".repeat(69_999))),

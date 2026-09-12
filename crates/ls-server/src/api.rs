@@ -20,9 +20,7 @@ struct Api {
 }
 
 /// Build the request handler.
-pub fn handler(
-    vault: Arc<Mutex<Vault>>,
-) -> impl Fn(Request) -> Response + Send + Sync + 'static {
+pub fn handler(vault: Arc<Mutex<Vault>>) -> impl Fn(Request) -> Response + Send + Sync + 'static {
     let api = Arc::new(Api {
         vault,
         logins: Mutex::new(RateLimiter::default()),
@@ -120,7 +118,15 @@ impl Api {
                 _ => method_not_allowed(),
             },
 
-            ["v1", "projects", project, "envs", environment, "secrets", key] => match method {
+            [
+                "v1",
+                "projects",
+                project,
+                "envs",
+                environment,
+                "secrets",
+                key,
+            ] => match method {
                 "GET" => self.get_secret(request, project, environment, key),
                 "PUT" => self.put_secret(request, project, environment, key),
                 "DELETE" => self.authed(request, |caller, vault| {
@@ -333,8 +339,11 @@ impl Api {
             ls_log::info!("project created", slug = slug);
             Ok(Response::json(
                 201,
-                &Value::object([("id", Value::from(id)), ("slug", Value::from(slug.as_str()))])
-                    .to_string(),
+                &Value::object([
+                    ("id", Value::from(id)),
+                    ("slug", Value::from(slug.as_str())),
+                ])
+                .to_string(),
             ))
         })
     }
@@ -354,8 +363,11 @@ impl Api {
             ls_log::info!("environment created", project = project, slug = slug);
             Ok(Response::json(
                 201,
-                &Value::object([("id", Value::from(id)), ("slug", Value::from(slug.as_str()))])
-                    .to_string(),
+                &Value::object([
+                    ("id", Value::from(id)),
+                    ("slug", Value::from(slug.as_str())),
+                ])
+                .to_string(),
             ))
         })
     }

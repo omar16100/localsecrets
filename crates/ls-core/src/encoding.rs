@@ -2,8 +2,7 @@
 
 /// URL-safe base64 without padding, as used for tokens and unseal shares.
 pub mod b64 {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     /// Encode bytes. Output never contains `+`, `/` or `=`.
     pub fn encode(input: &[u8]) -> String {

@@ -2,6 +2,8 @@
 resolver = "3"
 members = [
     "crates/ls-core",
+    "crates/ls-json",
+    "crates/ls-http",
     "crates/ls-store",
     "crates/ls-server",
     "crates/ls-cli",
@@ -12,7 +14,6 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/omarshabab/localsecrets"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -23,57 +24,23 @@ unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
 
+# Dependency policy: the standard library covers HTTP, storage, JSON, logging,
+# argument parsing and time. The only third-party crates permitted are audited
+# cryptographic primitives, because hand-written ciphers and KDFs fail quietly
+# on side channels. Adding anything else needs a reason written down in
+# docs/12092026_localsecrets_plan.md.
 [workspace.dependencies]
 ls-core = { path = "crates/ls-core" }
+ls-json = { path = "crates/ls-json" }
+ls-http = { path = "crates/ls-http" }
 ls-store = { path = "crates/ls-store" }
 
-# runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "process"] }
-
-# http
-axum = { version = "0.8", features = ["json", "macros"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "request-id"] }
-http-body-util = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# storage
-sqlx = { version = "0.8", default-features = false, features = [
-    "runtime-tokio",
-    "sqlite",
-    "migrate",
-    "macros",
-    "chrono",
-] }
-
-# crypto
-aes-gcm = "0.10"
-argon2 = "0.5"
-sha2 = "0.10"
-rand = "0.8"
-zeroize = { version = "1", features = ["derive"] }
-secrecy = "0.10"
-subtle = "2"
-base64 = "0.22"
-
-# cli
-clap = { version = "4", features = ["derive", "env", "wrap_help"] }
-
-# serde / misc
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-thiserror = "2.0"
-anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# dev
-assert_cmd = "2"
-predicates = "3"
-tempfile = "3"
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+sha2 = { version = "0.10", default-features = false }
+getrandom = "0.3"
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+subtle = { version = "2", default-features = false }
 
 [profile.release]
 opt-level = 3

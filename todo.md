@@ -25,7 +25,8 @@
 - [x] HTTP/1.1 request and response parsing, with body size limits
 - [x] Blocking server on std::net with a bounded thread pool
 - [x] Blocking client for the CLI
-- [ ] Structured logging to stderr, level from the environment
+- [x] Structured logging to stderr, level from the environment (ls-log)
+- [x] UTC timestamps and RFC 3339 (ls-core::time)
 
 ## M3 — ls-store append-only log
 - [ ] Record format with a version byte, length prefix and authentication

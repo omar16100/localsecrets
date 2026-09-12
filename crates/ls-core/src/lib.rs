@@ -5,6 +5,7 @@
 pub mod crypto;
 pub mod encoding;
 pub mod random;
+pub mod time;
 
 /// Crate version, surfaced by the server health endpoint.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

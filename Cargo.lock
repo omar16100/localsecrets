@@ -276,6 +276,13 @@ name = "ls-json"
 version = "0.1.0"
 
 [[package]]
+name = "ls-log"
+version = "0.1.0"
+dependencies = [
+ "ls-core",
+]
+
+[[package]]
 name = "ls-server"
 version = "0.1.0"
 dependencies = [

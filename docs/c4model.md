@@ -38,6 +38,7 @@ library. See [security.md](security.md) for the reasoning.
 - `crypto::password` — argon2id hashing and verification.
 - `crypto::token` — opaque token generation and hashing.
 - `encoding` — URL-safe base64 and hex.
+- `time` — UTC timestamps and RFC 3339, exact before 1970 and across leap years.
 - `random` — the single entropy source; failure is an error, not a panic.
 - `model` — domain types shared across crates.
 
@@ -53,6 +54,12 @@ panicking, and a serialiser. Shared by the server and the CLI.
 HTTP/1.1 request and response parsing with body size limits, a blocking server
 on `std::net::TcpListener` with a bounded thread pool, and a blocking client for
 the CLI.
+
+### `ls-log` (library)
+
+One line per event on standard error: timestamp, level, message, then
+`key=value` fields. Values are escaped, so nothing that reaches a field can
+forge a second record. Level comes from `LS_LOG`.
 
 ### `ls-store` (library)
 

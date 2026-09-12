@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/ls-core",
     "crates/ls-json",
+    "crates/ls-log",
     "crates/ls-http",
     "crates/ls-store",
     "crates/ls-server",
@@ -32,6 +33,7 @@ panic = "warn"
 [workspace.dependencies]
 ls-core = { path = "crates/ls-core" }
 ls-json = { path = "crates/ls-json" }
+ls-log = { path = "crates/ls-log" }
 ls-http = { path = "crates/ls-http" }
 ls-store = { path = "crates/ls-store" }
 

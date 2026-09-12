@@ -24,6 +24,15 @@ const FORMAT_VERSION: u8 = 1;
 const KIND_PLAIN: u8 = 0;
 const KIND_SEALED: u8 = 1;
 
+/// One record read back from the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    /// Whether it was stored sealed. The barrier is the only plain record.
+    pub sealed: bool,
+    /// The payload, decrypted if it was sealed.
+    pub payload: Vec<u8>,
+}
+
 /// An open append-only log.
 #[derive(Debug)]
 pub struct Log {
@@ -118,12 +127,30 @@ impl Log {
 
     /// Every record in order, decrypting the sealed ones with `key`.
     pub fn read_all(&mut self, key: &DataKey) -> Result<Vec<Vec<u8>>, StoreError> {
+        Ok(self
+            .read_records(key)?
+            .into_iter()
+            .map(|record| record.payload)
+            .collect())
+    }
+
+    /// Every record in order, keeping track of which were sealed.
+    ///
+    /// A replay needs the distinction: the barrier is stored plain and is not
+    /// an event, so it has to be stepped over rather than parsed.
+    pub fn read_records(&mut self, key: &DataKey) -> Result<Vec<Record>, StoreError> {
         let mut out = Vec::new();
         for_each_record(&self.path, |sequence, kind, payload| {
             if kind == KIND_PLAIN {
-                out.push(payload.to_vec());
+                out.push(Record {
+                    sealed: false,
+                    payload: payload.to_vec(),
+                });
             } else {
-                out.push(open(key, sequence, payload)?);
+                out.push(Record {
+                    sealed: true,
+                    payload: open(key, sequence, payload)?,
+                });
             }
             Ok(())
         })?;

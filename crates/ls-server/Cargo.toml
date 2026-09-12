@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "localsecrets server."
 
 [[bin]]
 name = "localsecretsd"
@@ -13,7 +14,9 @@ path = "src/main.rs"
 ls-core.workspace = true
 ls-json.workspace = true
 ls-http.workspace = true
+ls-log.workspace = true
 ls-store.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

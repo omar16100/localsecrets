@@ -19,7 +19,7 @@ mod log;
 mod state;
 
 pub use event::{Event, Sealed, TokenKind};
-pub use log::Log;
+pub use log::{Log, Record};
 pub use state::{Environment, Project, Secret, State, Token, User};
 pub use StoreError as Error;
 

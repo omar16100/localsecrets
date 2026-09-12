@@ -289,7 +289,9 @@ dependencies = [
  "ls-core",
  "ls-http",
  "ls-json",
+ "ls-log",
  "ls-store",
+ "zeroize",
 ]
 
 [[package]]

@@ -11,7 +11,7 @@ A minimal self-hosted secrets manager in Rust: a single-binary server plus a CLI
 | M0 workspace scaffold | done |
 | M1 ls-core crypto | done (72 tests, clippy clean) |
 | M2 ls-json, ls-http, ls-log | done (187 tests, clippy clean) |
-| M3 ls-store append-only log | not started |
+| M3 ls-store append-only log | done (227 tests, clippy clean) |
 | M4 seal/unseal and sessions | not started |
 | M5 projects, environments, secrets, machine tokens, audit | not started |
 | M6 CLI | not started |

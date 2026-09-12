@@ -14,9 +14,13 @@
 
 #![warn(missing_docs)]
 
+mod event;
 mod log;
+mod state;
 
+pub use event::{Event, Sealed, TokenKind};
 pub use log::Log;
+pub use state::{Environment, Project, Secret, State, Token, User};
 pub use StoreError as Error;
 
 /// Bytes of file header: magic plus a format version.
@@ -47,6 +51,8 @@ pub enum StoreError {
     },
     /// Encryption failed, which in practice means the system ran out of entropy.
     Crypto,
+    /// A record did not hold an event this build understands.
+    MalformedEvent(&'static str),
     /// The underlying file failed.
     Io(std::io::Error),
 }
@@ -65,6 +71,7 @@ impl std::fmt::Display for StoreError {
                 write!(f, "record of {len} bytes exceeds the limit of {limit}")
             }
             Self::Crypto => f.write_str("could not encrypt a record"),
+            Self::MalformedEvent(what) => write!(f, "record is not a usable event: {what}"),
             Self::Io(e) => write!(f, "store file failed: {e}"),
         }
     }

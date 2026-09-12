@@ -35,7 +35,7 @@
 - [x] Compaction through a temporary file and a rename
 - [x] Log file created mode 0600
 - [x] Crash-safety tests: truncated tail, edited record, wrong key
-- [ ] Domain events and the state they fold into
+- [x] Domain events and the state they fold into
 
 ## M4 — seal/unseal and sessions
 - [ ] init, unseal, seal, health

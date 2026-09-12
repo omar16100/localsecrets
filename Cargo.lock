@@ -297,6 +297,7 @@ name = "ls-store"
 version = "0.1.0"
 dependencies = [
  "ls-core",
+ "ls-json",
 ]
 
 [[package]]

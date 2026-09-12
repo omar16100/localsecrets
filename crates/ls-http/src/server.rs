@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
 
-/// How long a connection may take to deliver its request before it is dropped.
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a response may take to go out before the connection is dropped.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long to spend clearing a refused request off the socket before closing.
 const DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
@@ -90,10 +90,16 @@ impl Server {
                 }
                 match incoming {
                     Ok(stream) => {
-                        // Apply the timeouts here rather than in the worker, so
-                        // a connection cannot sit in the queue without one.
-                        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-                        let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
+                        // Applied here rather than in the worker, so a
+                        // connection cannot sit in the queue without one.
+                        //
+                        // The read timeout is the request deadline itself. The
+                        // in-loop check only fires when bytes arrive, so a
+                        // client that sends half a request and then goes quiet
+                        // would otherwise hold a worker until the socket timed
+                        // out, which is a much longer wait.
+                        let _ = stream.set_read_timeout(Some(limits.head_deadline));
+                        let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
 
                         // A bounded queue: when every worker is busy and the
                         // backlog is full, refuse rather than accumulate.
@@ -152,9 +158,6 @@ fn serve_connection<H>(stream: TcpStream, limits: &Limits, handler: &H)
 where
     H: Fn(Request) -> Response + Send + Sync,
 {
-    let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
-
     let mut writer = match stream.try_clone() {
         Ok(clone) => clone,
         Err(_) => return,

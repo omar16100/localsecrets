@@ -178,13 +178,19 @@ fn a_refusal_reaches_a_client_whose_body_arrives_late() {
         .unwrap();
     socket.flush().unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // Long enough to be a separate segment, far enough inside the drain's
+    // patience that a loaded machine does not turn this into a coin toss.
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let _ = socket.write_all(body);
     let _ = socket.flush();
 
     let mut answer = String::new();
-    socket.read_to_string(&mut answer).unwrap();
+    let read = socket.read_to_string(&mut answer);
 
+    assert!(
+        read.is_ok(),
+        "the connection was reset, losing the refusal that was already written: {read:?}"
+    );
     assert!(
         answer.starts_with("HTTP/1.1 400 "),
         "the client never received the refusal: {answer:?}"

@@ -18,7 +18,12 @@ use std::time::Duration;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a single read may block while clearing a refused request.
-const DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+///
+/// A refused client that has already sent everything and is waiting for the
+/// answer closes as soon as it has read it, which ends the drain at once. This
+/// only bounds the wait for one that does not, so it can afford to be generous
+/// enough that a slow client's last segment still arrives in time.
+const DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// How long to spend clearing a refused request in total.
 ///

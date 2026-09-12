@@ -240,6 +240,66 @@ fn a_repaired_log_can_be_appended_to_again() {
 }
 
 #[test]
+fn a_corrupted_length_field_is_refused_rather_than_treated_as_a_crash() {
+    // A torn write always leaves a prefix of a frame this code wrote, so its
+    // length field is either absent or valid. A length field that is present
+    // and impossible therefore means the file was edited, not that a write was
+    // interrupted. Treating the two alike lets someone drop the last record by
+    // changing four bytes: a revocation, say.
+    let dir = TempDir::new("corrupt-length");
+    let mut log = Log::open(&dir.file()).unwrap();
+    log.append(&key(), b"first").unwrap();
+    log.append(&key(), b"important: a revocation").unwrap();
+    drop(log);
+
+    let raw = std::fs::read(dir.file()).unwrap();
+    let last_frame = raw.len() - (1 + b"important: a revocation".len() + 12 + 16 + 4);
+    let mut edited = raw.clone();
+    edited[last_frame..last_frame + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+    std::fs::write(dir.file(), edited).unwrap();
+
+    assert!(
+        matches!(Log::open(&dir.file()), Err(StoreError::Corrupt { .. })),
+        "an edited length field must not look like a crash"
+    );
+}
+
+#[test]
+fn a_zero_length_field_is_refused() {
+    let dir = TempDir::new("zero-length");
+    let mut log = Log::open(&dir.file()).unwrap();
+    log.append(&key(), b"present").unwrap();
+    drop(log);
+
+    let mut raw = std::fs::read(dir.file()).unwrap();
+    raw.extend_from_slice(&[0, 0, 0, 0]);
+    std::fs::write(dir.file(), raw).unwrap();
+
+    assert!(matches!(
+        Log::open(&dir.file()),
+        Err(StoreError::Corrupt { .. })
+    ));
+}
+
+#[test]
+fn a_torn_length_field_is_still_treated_as_a_crash() {
+    // Fewer than four bytes cannot be a complete length field, so this is the
+    // ordinary case of a write interrupted at the very start of a record.
+    let dir = TempDir::new("torn-length");
+    let mut log = Log::open(&dir.file()).unwrap();
+    log.append(&key(), b"present").unwrap();
+    drop(log);
+
+    let mut raw = std::fs::read(dir.file()).unwrap();
+    raw.extend_from_slice(&[0, 0]);
+    std::fs::write(dir.file(), raw).unwrap();
+
+    let mut log = Log::open(&dir.file()).unwrap();
+    assert_eq!(log.read_all(&key()).unwrap(), vec![b"present".to_vec()]);
+    assert!(log.repaired());
+}
+
+#[test]
 fn a_file_that_is_not_a_log_is_refused() {
     let dir = TempDir::new("not-a-log");
     std::fs::write(dir.file(), b"this is not a localsecrets log at all").unwrap();

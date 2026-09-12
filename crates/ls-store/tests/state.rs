@@ -160,6 +160,33 @@ fn a_malformed_event_is_refused() {
 }
 
 #[test]
+fn a_sealed_value_carries_the_format_it_was_written_in() {
+    // Without this there is nothing to branch on the day the wrapping changes,
+    // and the only migration available is "re-encrypt everything and hope".
+    let encoded = secret_set("K", 1, 1).to_bytes();
+    let text = String::from_utf8(encoded).unwrap();
+
+    assert!(text.contains("\"v\":1"), "got {text}");
+}
+
+#[test]
+fn a_sealed_value_written_in_an_unknown_format_is_refused() {
+    let good = String::from_utf8(secret_set("K", 1, 1).to_bytes()).unwrap();
+
+    let from_the_future = good.replace("\"v\":1", "\"v\":2");
+    assert!(
+        Event::from_bytes(from_the_future.as_bytes()).is_err(),
+        "a newer wrapping must not be read as though it were this one"
+    );
+
+    let unversioned = good.replace("\"v\":1,", "");
+    assert!(
+        Event::from_bytes(unversioned.as_bytes()).is_err(),
+        "a value with no format marker must be refused"
+    );
+}
+
+#[test]
 fn a_sealed_value_round_trips_exactly() {
     let original = sealed(0xAB);
     let event = secret_set("K", 0xAB, 1);

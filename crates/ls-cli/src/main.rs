@@ -15,6 +15,8 @@ Usage: lsec <command> [options]
 Getting started
   init [--threshold N] [--shares N]   Create the vault; prints the unseal shares once
   unseal [SHARE]                      Offer one unseal share
+  rekey [--threshold N] [--shares N]  Split the master key again; the old
+                                      shares stop working, secrets are untouched
   seal                                Drop the root key until the next unseal
   status                              Show whether the server is sealed
 

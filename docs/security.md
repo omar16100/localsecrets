@@ -37,6 +37,8 @@ The point of the machine row is that a leaked deploy token stays a leaked deploy
 - **Row tampering.** A moved or edited ciphertext fails authentication instead of decrypting to something unexpected.
 - **Credential leakage from the store.** Tokens are stored as SHA-256 hashes and passwords as argon2id, so reading the file yields nothing directly usable.
 - **Transcription mistakes during a recovery.** Printed shares carry a checksum, so a typo is reported as a typo.
+- **A lost share, or a change of custodians.** `lsec rekey` splits the master key again and hands out a fresh set. The root key is untouched, so every stored value stays readable and the old shares stop working immediately.
+- **Edits to a record frame.** A length field that is complete and impossible cannot have come from an interrupted write, so the store refuses to open rather than treating the last record as a torn tail and discarding it.
 
 ## What this does NOT protect against
 
@@ -48,7 +50,7 @@ State these to anyone deciding whether to trust it.
 - **A modified server binary.** The server sees every value in plaintext by design. If you do not trust the binary, encryption at rest is irrelevant.
 - **Network eavesdropping without TLS.** The server binds `127.0.0.1` and expects a reverse proxy to terminate TLS. Rebinding to a public address without TLS sends tokens and secret values in the clear.
 - **A malicious or careless operator.** Any account can read any project: the only confinement is on machine tokens.
-- **Someone who can write to the store file.** A record can be edited, which makes the replay fail, but the last record can also be cut off, and a truncated tail is indistinguishable from a crash during a write. Rolling back one record that way would, for instance, undo a revocation. Defending against this needs state kept somewhere the attacker cannot reach, which a single file cannot provide.
+- **Someone who can delete bytes from the end of the store file.** Editing a record makes the replay fail, and editing a record's length field is now refused rather than mistaken for a crash, because an interrupted write can only ever leave a valid prefix of a frame. What remains is plain truncation: cutting the last record off entirely is indistinguishable from a write that never finished, and would, for instance, undo a revocation. Detecting that needs state kept somewhere the attacker cannot reach, which a single file cannot provide.
 - **Denial of service by an authenticated caller.** Requests are bounded in size and time and the accept queue is capped, but anyone who can log in can fill the store.
 
 ## On the seal barrier
@@ -69,6 +71,7 @@ For a single operator, a 3-of-5 split usually ends up entirely in one password m
 | Capped argon2 parameters on verification | Work parameters come out of the stored hash, so a tampered store could otherwise demand gigabytes and many passes on every login. Anything above 256 MiB, 10 passes or 4 lanes is refused before any hashing happens. |
 | Canonical base64 only | `Zg` and `Zh` would otherwise both decode to the same byte. One value, one spelling, so a checksum over decoded bytes detects an edited share. |
 | Shamir over GF(2^8) | Byte-wise sharing splits an arbitrary 32-byte key exactly. Prime-field and elliptic-curve schemes cannot represent every 32-byte value without bias. |
+| A format marker on every sealed value | The day the wrapping changes there has to be something to branch on. A value written in a format this build does not know is refused rather than read hopefully. |
 
 Shamir sharing carries no integrity of its own. A wrong recombination is caught because the recovered master key then fails to authenticate the wrapped root key, so a bad unseal reports failure rather than installing a wrong key.
 
@@ -79,6 +82,12 @@ The lockfile holds 45 entries, of which seven are this project's own crates. The
 This is a deliberate trade. Hand-written ciphers and key derivation functions fail quietly on side channels, so those stay with the specialists. Everything else is ordinary code where a smaller supply chain is worth more than a saved afternoon.
 
 Adding any dependency requires a reason recorded in `12092026_localsecrets_plan.md`.
+
+## Re-splitting the shares
+
+`lsec rekey --threshold 2 --shares 4` generates a new master key, splits it, and wraps the same root key with it. A new barrier record is appended; the newest one is the one that counts, because the log is append-only and nothing is ever edited in place.
+
+The consequence worth stating: the old barrier record is still in the file. Anyone holding a quorum of the *old* shares and a copy of the file taken before the re-split can still reach the root key from that copy. Re-splitting replaces who can unseal this server from now on; it does not reach backwards into copies already made. If shares were exposed rather than merely lost, the honest response is a new vault and new secret values.
 
 ## Limits worth knowing before you rely on this
 

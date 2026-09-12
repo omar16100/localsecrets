@@ -11,6 +11,9 @@ use ls_core::time::Timestamp;
 use ls_json::{Value, parse};
 use ls_store::Sealed;
 
+/// The format this build writes and reads.
+pub const BARRIER_FORMAT: i64 = 1;
+
 /// The barrier, as stored.
 #[derive(Debug, Clone)]
 pub struct Barrier {
@@ -34,6 +37,7 @@ impl Barrier {
     pub fn to_bytes(&self) -> Vec<u8> {
         Value::object([
             ("type", Value::from("barrier")),
+            ("v", Value::Int(BARRIER_FORMAT)),
             ("threshold", Value::Int(i64::from(self.threshold))),
             ("shares", Value::Int(i64::from(self.shares))),
             (
@@ -57,6 +61,9 @@ impl Barrier {
 
         if value.get("type").and_then(Value::as_str) != Some("barrier") {
             return Err("not a barrier record");
+        }
+        if value.get("v").and_then(Value::as_i64) != Some(BARRIER_FORMAT) {
+            return Err("barrier written in a format this build does not know");
         }
 
         let small = |name: &str| -> Result<u8, &'static str> {

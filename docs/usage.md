@@ -87,6 +87,16 @@ lsec status
 
 A restarted server comes back sealed. This is the point: the files on disk are inert until a quorum of share holders is present.
 
+## Changing who holds the shares
+
+```sh
+lsec rekey --threshold 2 --shares 4
+```
+
+Splits the master key again and prints a fresh set. The old shares stop working straight away, and the secrets are untouched: only the shares that reach them change. Use this when a share is lost, or when a custodian leaves.
+
+It does not help if a share was exposed rather than lost: anyone with a copy of the store file from before the re-split, and a quorum of the old shares, can still open that copy. See [security.md](security.md).
+
 ## Configuration
 
 | What | Where |

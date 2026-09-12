@@ -13,6 +13,7 @@ pub fn dispatch(arguments: &[String]) -> Result<ExitCode, String> {
 
     match command {
         "init" => init(&common, args),
+        "rekey" => rekey(&common, args),
         "unseal" => unseal(&common, args),
         "seal" => seal(&common),
         "status" => status(&common),
@@ -103,9 +104,49 @@ fn init(common: &Common, args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn rekey(common: &Common, args: &[String]) -> Result<ExitCode, String> {
+    let threshold = number(args, "--threshold").unwrap_or(1);
+    let shares = number(args, "--shares").unwrap_or(1);
+
+    let answer = common.connect_authenticated()?.call(
+        "POST",
+        "/v1/sys/rekey",
+        Some(Value::object([
+            ("threshold", Value::Int(threshold)),
+            ("shares", Value::Int(shares)),
+        ])),
+    )?;
+
+    let listed = answer
+        .get("shares")
+        .and_then(Value::as_array)
+        .ok_or("the server did not send any shares")?;
+
+    println!("Shares re-split. {threshold} of {shares} are needed to unseal.");
+    println!();
+    println!("The previous shares no longer open this vault. These are shown once:");
+    println!();
+    for share in listed {
+        if let Some(text) = share.as_str() {
+            println!("  {text}");
+        }
+    }
+    println!();
+    println!("The secrets themselves are untouched; only the shares changed.");
+
+    Ok(ExitCode::SUCCESS)
+}
+
 fn unseal(common: &Common, args: &[String]) -> Result<ExitCode, String> {
     let share = match args.first() {
-        Some(share) => share.clone(),
+        Some(share) => {
+            eprintln!(
+                "lsec: a share on the command line goes into your shell history and is \
+                 visible to anyone who can list processes; prefer `lsec unseal` and \
+                 paste it at the prompt"
+            );
+            share.clone()
+        }
         None => input::secret_line("unseal share: ")?,
     };
 

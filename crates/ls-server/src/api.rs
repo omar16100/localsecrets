@@ -54,6 +54,7 @@ impl Api {
             ["v1", "sys", "health"] => self.only(method, "GET", || self.health()),
             ["v1", "sys", "init"] => self.only(method, "POST", || self.init(request)),
             ["v1", "sys", "unseal"] => self.only(method, "POST", || self.unseal(request)),
+            ["v1", "sys", "rekey"] => self.only(method, "POST", || self.rekey(request)),
             ["v1", "sys", "seal"] => self.only(method, "POST", || {
                 self.authed(request, |caller, vault| {
                     vault.seal_as(&caller)?;
@@ -185,6 +186,38 @@ impl Api {
             }
             Err(error) => vault_error(&error),
         }
+    }
+
+    fn rekey(&self, request: &Request) -> Response {
+        let body = match body_of(request) {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+        let threshold = small_number(&body, "threshold").unwrap_or(1);
+        let shares = small_number(&body, "shares").unwrap_or(1);
+
+        self.authed(request, |caller, vault| {
+            let outcome = vault.rekey(&caller, threshold, shares)?;
+            ls_log::info!(
+                "unseal shares re-split",
+                threshold = threshold,
+                shares = shares
+            );
+
+            let listed: Vec<Value> = outcome
+                .shares
+                .iter()
+                .map(|share| Value::from(share.as_str()))
+                .collect();
+            Ok(Response::json(
+                200,
+                &Value::object([
+                    ("shares", Value::Array(listed)),
+                    ("threshold", Value::Int(i64::from(outcome.threshold))),
+                ])
+                .to_string(),
+            ))
+        })
     }
 
     fn unseal(&self, request: &Request) -> Response {

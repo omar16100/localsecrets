@@ -284,34 +284,68 @@ fn check_header(file: &mut File) -> Result<(), StoreError> {
 
 /// Walk the frames, returning the record count and the length of the last
 /// complete record. Nothing is decrypted here.
+///
+/// The distinction that matters is between a write interrupted by a crash and a
+/// file that has been edited. An interrupted write leaves a *prefix* of a frame
+/// this code wrote, so its length field is either incomplete or valid. A length
+/// field that is complete and impossible cannot have come from here, and is
+/// refused rather than quietly treated as a torn tail: doing the latter would
+/// let anyone drop the last record by changing four bytes.
 fn scan(file: &mut File) -> Result<(usize, u64), StoreError> {
     file.seek(SeekFrom::Start(HEADER_LEN as u64))?;
     let mut reader = BufReader::new(file);
 
     let mut count = 0usize;
     let mut good_len = HEADER_LEN as u64;
-    let mut length_bytes = [0u8; 4];
 
     loop {
-        match reader.read_exact(&mut length_bytes) {
-            Ok(()) => {}
-            Err(_) => return Ok((count, good_len)),
-        }
-        let length = u32::from_be_bytes(length_bytes) as usize;
-        if length == 0 || length > MAX_RECORD_LEN {
-            // Not a frame this build would have written: treat it as the torn
-            // tail rather than trying to interpret it.
+        let mut length_bytes = [0u8; 4];
+        // A clean end, or too few bytes to be a length field: an interrupted
+        // write, which the caller truncates away.
+        if read_fully(&mut reader, &mut length_bytes)? < length_bytes.len() {
             return Ok((count, good_len));
         }
 
+        let length = u32::from_be_bytes(length_bytes) as usize;
+        if length == 0 {
+            return Err(StoreError::Corrupt {
+                at: good_len,
+                why: "a record frame claims to be empty",
+            });
+        }
+        if length > MAX_RECORD_LEN {
+            return Err(StoreError::Corrupt {
+                at: good_len,
+                why: "a record frame claims a length this build never writes",
+            });
+        }
+
         let mut body = vec![0u8; length];
-        if reader.read_exact(&mut body).is_err() {
+        if read_fully(&mut reader, &mut body)? != length {
+            // The length was plausible but the body is short: the ordinary
+            // interrupted write.
             return Ok((count, good_len));
         }
 
         count += 1;
         good_len += 4 + length as u64;
     }
+}
+
+/// Read as much as is there, returning how many bytes arrived. Unlike
+/// `read_exact` this distinguishes "nothing left" from "some but not all",
+/// which is what tells a clean end from an interrupted write.
+fn read_fully<R: Read>(reader: &mut R, buffer: &mut [u8]) -> Result<usize, StoreError> {
+    let mut filled = 0usize;
+    while filled < buffer.len() {
+        match reader.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    Ok(filled)
 }
 
 /// Read the file again, handing each complete record to `visit`.
@@ -378,4 +412,122 @@ fn open(key: &DataKey, sequence: usize, payload: &[u8]) -> Result<Vec<u8>, Store
 
     key.open(&envelope, &record_context(sequence))
         .map_err(|_| StoreError::Unreadable { sequence })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use ls_core::crypto::aead::DataKey;
+
+    /// A log in a temporary directory that cleans itself up.
+    struct Scratch {
+        directory: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            let directory = std::env::temp_dir().join(format!("ls-log-unit-{label}-{unique}"));
+            std::fs::create_dir_all(&directory).expect("temporary directory");
+            Self { directory }
+        }
+
+        fn path(&self) -> PathBuf {
+            self.directory.join("store.log")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn key() -> DataKey {
+        DataKey::from_bytes(&[3u8; 32]).expect("32 bytes")
+    }
+
+    /// Swap in a handle that cannot be written to, which is the only way to
+    /// produce a real write failure without a full disk.
+    fn make_writes_fail(log: &mut Log, path: &Path) {
+        log.file = File::open(path).expect("read-only handle");
+    }
+
+    #[test]
+    fn a_failed_append_is_reported() {
+        let scratch = Scratch::new("failed-append");
+        let mut log = Log::open(&scratch.path()).expect("open");
+        log.append(&key(), b"before").expect("first append");
+
+        make_writes_fail(&mut log, &scratch.path());
+
+        assert!(
+            matches!(log.append(&key(), b"after"), Err(StoreError::Io(_))),
+            "a write to a read-only handle should fail"
+        );
+    }
+
+    #[test]
+    fn nothing_more_may_be_written_after_a_failed_append() {
+        // Every record is sealed against its position. Carrying on after a
+        // partial write could reuse a sequence number, and then the log would
+        // not replay at all.
+        let scratch = Scratch::new("poisoned");
+        let mut log = Log::open(&scratch.path()).expect("open");
+        log.append(&key(), b"before").expect("first append");
+
+        make_writes_fail(&mut log, &scratch.path());
+        let _ = log.append(&key(), b"fails");
+
+        assert!(matches!(
+            log.append(&key(), b"and so does this"),
+            Err(StoreError::Broken)
+        ));
+        assert!(matches!(
+            log.append_plain(b"and this"),
+            Err(StoreError::Broken)
+        ));
+    }
+
+    #[test]
+    fn a_record_refused_for_its_size_does_not_poison_the_log() {
+        // Refusing before writing anything leaves the log perfectly usable, and
+        // treating that as damage would be a denial of service.
+        let scratch = Scratch::new("oversized-ok");
+        let mut log = Log::open(&scratch.path()).expect("open");
+
+        let huge = vec![b'x'; MAX_RECORD_LEN + 1];
+        assert!(matches!(
+            log.append(&key(), &huge),
+            Err(StoreError::RecordTooLarge { .. })
+        ));
+
+        log.append(&key(), b"still fine")
+            .expect("append after refusal");
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn reopening_clears_the_broken_state() {
+        let scratch = Scratch::new("reopen-clears");
+        let mut log = Log::open(&scratch.path()).expect("open");
+        log.append(&key(), b"before").expect("first append");
+        make_writes_fail(&mut log, &scratch.path());
+        let _ = log.append(&key(), b"fails");
+        drop(log);
+
+        let mut reopened = Log::open(&scratch.path()).expect("reopen");
+        reopened
+            .append(&key(), b"after")
+            .expect("append after reopen");
+
+        assert_eq!(
+            reopened.read_all(&key()).expect("read"),
+            vec![b"before".to_vec(), b"after".to_vec()]
+        );
+    }
 }

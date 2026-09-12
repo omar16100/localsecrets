@@ -56,6 +56,14 @@ pub enum StoreError {
     /// An earlier append failed partway, so the log cannot be written to again
     /// until it is reopened and rescanned.
     Broken,
+    /// A record frame is structurally impossible, which means the file was
+    /// edited. An interrupted write cannot produce this.
+    Corrupt {
+        /// Byte offset of the frame.
+        at: u64,
+        /// What was wrong with it.
+        why: &'static str,
+    },
     /// The underlying file failed.
     Io(std::io::Error),
 }
@@ -76,6 +84,7 @@ impl std::fmt::Display for StoreError {
             Self::Crypto => f.write_str("could not encrypt a record"),
             Self::MalformedEvent(what) => write!(f, "record is not a usable event: {what}"),
             Self::Broken => f.write_str("an earlier write failed; the store must be reopened"),
+            Self::Corrupt { at, why } => write!(f, "the store is damaged at byte {at}: {why}"),
             Self::Io(e) => write!(f, "store file failed: {e}"),
         }
     }

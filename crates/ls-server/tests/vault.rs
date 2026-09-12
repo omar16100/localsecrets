@@ -1208,3 +1208,141 @@ fn a_vault_with_a_long_lived_token_still_replays() {
 
     assert!(!reopened.is_sealed(), "the log should still replay");
 }
+
+// --- re-splitting the unseal shares ----------------------------------------
+
+#[test]
+fn the_shares_can_be_re_split_without_touching_the_secrets() {
+    // Losing one share of three, or changing who holds them, should not mean
+    // rebuilding the vault and re-entering every secret.
+    let mut fixture = ready("rekey");
+    fixture
+        .vault
+        .create_project(&fixture.caller, "demo", "Demo")
+        .unwrap();
+    fixture
+        .vault
+        .create_environment(&fixture.caller, "demo", "dev", "Development")
+        .unwrap();
+    fixture
+        .vault
+        .set_secret(&fixture.caller, "demo", "dev", "K", b"kept")
+        .unwrap();
+
+    let fresh = fixture.vault.rekey(&fixture.caller, 2, 4).unwrap();
+
+    assert_eq!(fresh.shares.len(), 4);
+    assert_eq!(fresh.threshold, 2);
+    assert_eq!(
+        fixture
+            .vault
+            .get_secret(&fixture.caller, "demo", "dev", "K")
+            .unwrap()
+            .as_slice(),
+        b"kept",
+        "re-splitting must not disturb the data"
+    );
+}
+
+#[test]
+fn the_old_shares_stop_working_after_a_re_split() {
+    let mut fixture = ready("rekey-old-shares");
+    let old = fixture.shares.clone();
+
+    let fresh = fixture.vault.rekey(&fixture.caller, 2, 3).unwrap();
+    fixture.vault.seal();
+
+    fixture.vault.submit_share(&old[0]).unwrap();
+    assert!(
+        matches!(
+            fixture.vault.submit_share(&old[1]),
+            Err(VaultError::UnsealFailed)
+        ),
+        "shares from before the re-split must not open the vault"
+    );
+
+    fixture.vault.submit_share(&fresh.shares[0]).unwrap();
+    fixture.vault.submit_share(&fresh.shares[1]).unwrap();
+    assert!(!fixture.vault.is_sealed());
+}
+
+#[test]
+fn a_re_split_survives_a_restart() {
+    let mut fixture = ready("rekey-restart");
+    fixture
+        .vault
+        .create_project(&fixture.caller, "demo", "Demo")
+        .unwrap();
+    fixture
+        .vault
+        .create_environment(&fixture.caller, "demo", "dev", "Development")
+        .unwrap();
+    fixture
+        .vault
+        .set_secret(&fixture.caller, "demo", "dev", "K", b"kept")
+        .unwrap();
+
+    let fresh = fixture.vault.rekey(&fixture.caller, 1, 1).unwrap();
+    let path = fixture.dir.file();
+    let session = fixture.session.clone();
+    let old = fixture.shares.clone();
+    drop(fixture.vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    assert_eq!(
+        reopened.threshold(),
+        Some(1),
+        "the newest split is the one that counts"
+    );
+
+    // The old shares are no longer a quorum, whatever the file still contains.
+    assert!(reopened.submit_share(&old[0]).is_err());
+
+    reopened.submit_share(&fresh.shares[0]).unwrap();
+    let caller = reopened.authenticate(&session).unwrap();
+    assert_eq!(
+        reopened
+            .get_secret(&caller, "demo", "dev", "K")
+            .unwrap()
+            .as_slice(),
+        b"kept"
+    );
+}
+
+#[test]
+fn re_splitting_needs_an_unsealed_vault() {
+    let mut fixture = ready("rekey-sealed");
+    let caller = fixture.caller.clone();
+    fixture.vault.seal();
+
+    assert!(matches!(
+        fixture.vault.rekey(&caller, 2, 3),
+        Err(VaultError::Sealed)
+    ));
+}
+
+#[test]
+fn a_machine_token_cannot_re_split_the_shares() {
+    let (mut fixture, machine) = with_machine("rekey-machine");
+
+    assert!(matches!(
+        fixture.vault.rekey(&machine, 1, 1),
+        Err(VaultError::Forbidden)
+    ));
+}
+
+#[test]
+fn re_splitting_refuses_nonsensical_parameters() {
+    let mut fixture = ready("rekey-bad");
+    let before = fixture.vault.threshold();
+
+    assert!(fixture.vault.rekey(&fixture.caller, 0, 3).is_err());
+    assert!(fixture.vault.rekey(&fixture.caller, 4, 3).is_err());
+
+    assert_eq!(
+        fixture.vault.threshold(),
+        before,
+        "a refused re-split must leave the old shares working"
+    );
+    assert!(!fixture.vault.is_sealed());
+}

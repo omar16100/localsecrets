@@ -201,10 +201,13 @@ impl Vault {
             );
         }
 
+        // The newest barrier wins: re-splitting the shares appends another one
+        // rather than editing the first, because the log is append-only.
         let barrier = log
             .read_plain()?
-            .first()
-            .and_then(|payload| Barrier::from_bytes(payload).ok());
+            .iter()
+            .rev()
+            .find_map(|payload| Barrier::from_bytes(payload).ok());
 
         Ok(Self {
             log,
@@ -282,6 +285,55 @@ impl Vault {
         Ok(InitOutcome {
             shares: split.iter().map(ToString::to_string).collect(),
             root_token,
+            threshold,
+        })
+    }
+
+    /// Split the master key again, into a fresh set of shares.
+    ///
+    /// The root key is unchanged, so every stored value stays readable; only
+    /// the shares that reach it are replaced. This is what makes a lost share,
+    /// or a change of custodians, an ordinary operation rather than a reason to
+    /// rebuild the vault and re-enter every secret.
+    ///
+    /// The old shares stop working the moment this returns.
+    pub fn rekey(
+        &mut self,
+        caller: &Caller,
+        threshold: u8,
+        shares: u8,
+    ) -> Result<InitOutcome, VaultError> {
+        self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
+
+        let root_key = self.root_key.as_ref().ok_or(VaultError::Sealed)?;
+
+        // Everything that can fail happens before the write, so a refusal
+        // leaves the existing shares working.
+        let master_bytes =
+            Zeroizing::new(random::bytes::<MASTER_KEY_LEN>().map_err(|_| VaultError::Crypto)?);
+        let split = shamir::split(master_bytes.as_slice(), threshold, shares)
+            .map_err(|_| VaultError::Invalid("share configuration"))?;
+        let master_key = DataKey::from_bytes(master_bytes.as_slice()).ok_or(VaultError::Crypto)?;
+        let wrapped = master_key
+            .wrap(root_key, &Barrier::context())
+            .map_err(|_| VaultError::Crypto)?;
+
+        let barrier = Barrier {
+            threshold,
+            shares,
+            root_key: Sealed::from(wrapped),
+            created_at: Timestamp::now(),
+        };
+        self.log.append_plain(&barrier.to_bytes())?;
+        self.barrier = Some(barrier);
+        self.pending_shares.clear();
+
+        self.record_audit(caller, "vault.rekey", "unseal shares", "ok")?;
+
+        Ok(InitOutcome {
+            shares: split.iter().map(ToString::to_string).collect(),
+            root_token: Zeroizing::new(String::new()),
             threshold,
         })
     }

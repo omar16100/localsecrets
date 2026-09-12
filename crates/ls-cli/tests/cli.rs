@@ -434,6 +434,68 @@ fn sealing_and_unsealing_works_from_the_command_line() {
 }
 
 #[test]
+fn the_shares_can_be_re_split_from_the_command_line() {
+    let cli = Cli::start("rekey");
+    let old = cli.ready();
+    cli.run_with_stdin(&["set", "K"], "kept\n");
+
+    let output = cli.stdout(&["rekey", "--threshold", "1", "--shares", "2"]);
+    let fresh: Vec<String> = output
+        .lines()
+        .filter(|line| line.trim().starts_with("lss1."))
+        .map(|line| line.trim().to_owned())
+        .collect();
+
+    assert_eq!(fresh.len(), 2, "expected two new shares:\n{output}");
+    assert!(
+        output.to_lowercase().contains("no longer"),
+        "the operator should be told the old shares are dead:\n{output}"
+    );
+    assert_eq!(cli.stdout(&["get", "K"]).trim(), "kept");
+
+    cli.stdout(&["seal"]);
+    assert!(
+        !cli.run(&["unseal", &old[0]]).status.success(),
+        "an old share should no longer be accepted"
+    );
+    assert!(cli.stdout(&["unseal", &fresh[0]]).contains("unsealed"));
+}
+
+#[test]
+fn an_unseal_share_on_the_command_line_warns() {
+    // A share is worth more than most secrets, and argv is visible to anyone
+    // who can list processes and lands in shell history.
+    let cli = Cli::start("unseal-argv");
+    let shares = cli.ready();
+    cli.stdout(&["seal"]);
+
+    let output = cli.run(&["unseal", &shares[0]]);
+
+    assert!(output.status.success());
+    let warning = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(
+        warning.contains("history") || warning.contains("visible"),
+        "passing a share on argv should warn: {warning}"
+    );
+}
+
+#[test]
+fn an_unseal_share_read_from_stdin_does_not_warn() {
+    let cli = Cli::start("unseal-stdin");
+    let shares = cli.ready();
+    cli.stdout(&["seal"]);
+
+    let output = cli.run_with_stdin(&["unseal"], &format!("{}\n", shares[0]));
+
+    assert!(output.status.success());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr)
+            .to_lowercase()
+            .contains("history")
+    );
+}
+
+#[test]
 fn a_machine_token_can_be_issued_and_used() {
     let cli = Cli::start("token");
     cli.ready();

@@ -45,15 +45,33 @@ impl std::fmt::Debug for Sealed {
     }
 }
 
+/// The wrapping a sealed value was written with.
+///
+/// Carried on every stored value so that the day the scheme changes there is
+/// something to branch on, rather than a file full of bytes whose format has to
+/// be guessed. An unknown version is refused rather than read hopefully.
+pub const SEALED_FORMAT: i64 = 1;
+
 impl Sealed {
     fn to_value(&self) -> Value {
         Value::object([
+            ("v", Value::Int(SEALED_FORMAT)),
             ("nonce", Value::from(hex::encode(&self.nonce))),
             ("ciphertext", Value::from(hex::encode(&self.ciphertext))),
         ])
     }
 
     fn from_value(value: &Value) -> Result<Self, StoreError> {
+        match value.get("v").and_then(Value::as_i64) {
+            Some(SEALED_FORMAT) => {}
+            Some(_) => return Err(StoreError::MalformedEvent("unknown sealed value format")),
+            None => {
+                return Err(StoreError::MalformedEvent(
+                    "sealed value has no format marker",
+                ));
+            }
+        }
+
         Ok(Self {
             nonce: bytes_field(value, "nonce")?,
             ciphertext: bytes_field(value, "ciphertext")?,

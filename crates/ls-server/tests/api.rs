@@ -783,3 +783,110 @@ fn the_root_token_cannot_do_anything_but_create_the_first_account() {
     );
     assert_eq!(api.get("/v1/audit", Some(&root)).0, 403);
 }
+
+// --- re-splitting the shares over the API ----------------------------------
+
+#[test]
+fn the_shares_can_be_re_split_and_the_old_ones_stop_working() {
+    let api = Harness::start("rekey");
+    let (old, session) = api.ready();
+
+    let (status, body) = api.post(
+        "/v1/sys/rekey",
+        Some(&session),
+        r#"{"threshold":2,"shares":4}"#,
+    );
+    assert_eq!(status, 200, "{body}");
+    let fresh: Vec<String> = body
+        .get("shares")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(fresh.len(), 4);
+
+    api.post("/v1/sys/seal", Some(&session), "");
+
+    api.post(
+        "/v1/sys/unseal",
+        None,
+        &format!(r#"{{"share":"{}"}}"#, old[0]),
+    );
+    let (status, _) = api.post(
+        "/v1/sys/unseal",
+        None,
+        &format!(r#"{{"share":"{}"}}"#, old[1]),
+    );
+    assert_eq!(status, 400, "an old share should no longer be a quorum");
+
+    api.post(
+        "/v1/sys/unseal",
+        None,
+        &format!(r#"{{"share":"{}"}}"#, fresh[0]),
+    );
+    let (_, body) = api.post(
+        "/v1/sys/unseal",
+        None,
+        &format!(r#"{{"share":"{}"}}"#, fresh[1]),
+    );
+    assert_eq!(body.get("sealed").and_then(Value::as_bool), Some(false));
+}
+
+#[test]
+fn re_splitting_needs_a_session_and_an_unsealed_vault() {
+    let api = Harness::start("rekey-auth");
+    let session = api.with_project();
+    let (_, body) = api.post(
+        "/v1/tokens",
+        Some(&session),
+        r#"{"project":"demo","environment":"dev","label":"ci"}"#,
+    );
+    let machine = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
+
+    assert_eq!(
+        api.post(
+            "/v1/sys/rekey",
+            Some(&machine),
+            r#"{"threshold":1,"shares":1}"#
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        api.post("/v1/sys/rekey", None, r#"{"threshold":1,"shares":1}"#)
+            .0,
+        401
+    );
+
+    api.post("/v1/sys/seal", Some(&session), "");
+    assert_eq!(
+        api.post(
+            "/v1/sys/rekey",
+            Some(&session),
+            r#"{"threshold":1,"shares":1}"#
+        )
+        .0,
+        503
+    );
+}
+
+#[test]
+fn a_re_split_never_returns_a_root_token() {
+    // Only init mints one, and it is spent on the first account. Handing one
+    // back here would quietly restore an unconfined credential.
+    let api = Harness::start("rekey-no-root");
+    let (_, session) = api.ready();
+
+    let (_, body) = api.post(
+        "/v1/sys/rekey",
+        Some(&session),
+        r#"{"threshold":1,"shares":1}"#,
+    );
+
+    assert!(body.get("root_token").is_none(), "{body}");
+}

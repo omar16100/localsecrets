@@ -25,12 +25,30 @@ struct Window {
 }
 
 /// Counts recent failures per address.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RateLimiter {
     windows: HashMap<String, Window>,
+    budget: u32,
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self {
+            windows: HashMap::new(),
+            budget: MAX_ATTEMPTS,
+        }
+    }
 }
 
 impl RateLimiter {
+    /// A limiter with a budget of its own.
+    pub fn with_budget(budget: u32) -> Self {
+        Self {
+            windows: HashMap::new(),
+            budget,
+        }
+    }
+
     /// Record an attempt and say whether it may go ahead.
     ///
     /// The key is normalised first: without that, `Dev@Example.com ` and
@@ -63,7 +81,7 @@ impl RateLimiter {
         }
 
         window.attempts += 1;
-        window.attempts <= MAX_ATTEMPTS
+        window.attempts <= self.budget
     }
 
     /// Forget the failures for an address that has just logged in.

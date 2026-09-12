@@ -362,24 +362,34 @@ where
         .map_err(|_| StoreError::NotALog)?;
 
     let mut sequence = 0usize;
-    let mut length_bytes = [0u8; 4];
+    let mut offset = HEADER_LEN as u64;
 
     loop {
-        if reader.read_exact(&mut length_bytes).is_err() {
+        // The same rule as `scan`: an impossible frame means the file was
+        // edited, and is refused. Being lenient here while `scan` is strict
+        // would mean a file that opens cleanly and then silently replays only
+        // part of itself.
+        let mut length_bytes = [0u8; 4];
+        if read_fully(&mut reader, &mut length_bytes)? < length_bytes.len() {
             return Ok(());
         }
+
         let length = u32::from_be_bytes(length_bytes) as usize;
         if length == 0 || length > MAX_RECORD_LEN {
-            return Ok(());
+            return Err(StoreError::Corrupt {
+                at: offset,
+                why: "a record frame claims an impossible length",
+            });
         }
 
         let mut body = vec![0u8; length];
-        if reader.read_exact(&mut body).is_err() {
+        if read_fully(&mut reader, &mut body)? != length {
             return Ok(());
         }
 
         visit(sequence, body[0], &body[1..])?;
         sequence += 1;
+        offset += 4 + length as u64;
     }
 }
 

@@ -13,10 +13,22 @@ use std::sync::{Arc, Mutex};
 /// How long a session lasts.
 const SESSION_SECONDS: i64 = 12 * 3600;
 
+/// Unseal and init attempts allowed per minute, across all callers.
+///
+/// These endpoints cannot require a token, because the whole point of them is
+/// to reach a vault that cannot yet authenticate anyone. Anything that can
+/// reach the port can therefore feed the ceremony well-formed rubbish: share
+/// checksums are unkeyed, so forging one is easy, and enough of them push the
+/// attempt past its threshold, fail the recombination, and clear the progress
+/// the operator had built up. A generous ceiling leaves a real ceremony
+/// untouched and stops that being free.
+const CEREMONY_BUDGET: u32 = 60;
+
 /// Shared server state.
 struct Api {
     vault: Arc<Mutex<Vault>>,
     logins: Mutex<RateLimiter>,
+    ceremonies: Mutex<RateLimiter>,
 }
 
 /// Build the request handler.
@@ -24,6 +36,7 @@ pub fn handler(vault: Arc<Mutex<Vault>>) -> impl Fn(Request) -> Response + Send 
     let api = Arc::new(Api {
         vault,
         logins: Mutex::new(RateLimiter::default()),
+        ceremonies: Mutex::new(RateLimiter::with_budget(CEREMONY_BUDGET)),
     });
 
     move |request| {
@@ -49,6 +62,10 @@ impl Api {
             .filter(|part| !part.is_empty())
             .collect();
         let method = request.method.as_str();
+
+        if let Some(refusal) = refuse_cross_origin(request) {
+            return refusal;
+        }
 
         match segments.as_slice() {
             ["v1", "sys", "health"] => self.only(method, "GET", || self.health()),
@@ -156,14 +173,26 @@ impl Api {
         )
     }
 
+    /// Both unauthenticated system endpoints share one budget.
+    fn ceremony_allowed(&self) -> bool {
+        Self::guard(&self.ceremonies).allow("sys")
+    }
+
     fn init(&self, request: &Request) -> Response {
+        if !self.ceremony_allowed() {
+            ls_log::warn!("init rate limited");
+            return error_response(429, "too many attempts, try again shortly");
+        }
+
         let body = match body_of(request) {
             Ok(body) => body,
             Err(response) => return response,
         };
 
-        let threshold = small_number(&body, "threshold").unwrap_or(1);
-        let shares = small_number(&body, "shares").unwrap_or(1);
+        let (threshold, shares) = match share_parameters(&body) {
+            Ok(pair) => pair,
+            Err(response) => return response,
+        };
 
         let mut vault = self.lock();
         match vault.init(threshold, shares) {
@@ -193,8 +222,10 @@ impl Api {
             Ok(body) => body,
             Err(response) => return response,
         };
-        let threshold = small_number(&body, "threshold").unwrap_or(1);
-        let shares = small_number(&body, "shares").unwrap_or(1);
+        let (threshold, shares) = match share_parameters(&body) {
+            Ok(pair) => pair,
+            Err(response) => return response,
+        };
 
         self.authed(request, |caller, vault| {
             let outcome = vault.rekey(&caller, threshold, shares)?;
@@ -221,6 +252,11 @@ impl Api {
     }
 
     fn unseal(&self, request: &Request) -> Response {
+        if !self.ceremony_allowed() {
+            ls_log::warn!("unseal rate limited");
+            return error_response(429, "too many attempts, try again shortly");
+        }
+
         let body = match body_of(request) {
             Ok(body) => body,
             Err(response) => return response,
@@ -292,9 +328,11 @@ impl Api {
 
         // Rate limit before touching the vault, so guessing costs the attacker
         // rather than the server.
-        if let Ok(mut logins) = self.logins.lock()
-            && !logins.allow(&email)
-        {
+        // Taking the value out of a poisoned lock rather than giving up on it:
+        // the limiter has no invariant spanning two operations, and the
+        // alternative is that one panic disables the only control standing
+        // between a password and an unlimited number of guesses.
+        if !Self::guard(&self.logins).allow(&email) {
             ls_log::warn!("login rate limited", email = email);
             return error_response(429, "too many attempts, try again shortly");
         }
@@ -302,9 +340,7 @@ impl Api {
         let mut vault = self.lock();
         match vault.login(&email, &password, SESSION_SECONDS) {
             Ok(token) => {
-                if let Ok(mut logins) = self.logins.lock() {
-                    logins.succeeded(&email);
-                }
+                Self::guard(&self.logins).succeeded(&email);
                 ls_log::info!("login", email = email, outcome = "ok");
                 Response::json(
                     200,
@@ -466,6 +502,12 @@ impl Api {
         }
 
         self.authed(request, |caller, vault| {
+            // Everything is checked before anything is written, so a refusal
+            // does not leave half the batch in place with no way to tell which
+            // half.
+            for (key, value) in &entries {
+                vault.check_secret(&caller, project, environment, key, value.as_bytes())?;
+            }
             for (key, value) in &entries {
                 vault.set_secret(&caller, project, environment, key, value.as_bytes())?;
             }
@@ -516,14 +558,32 @@ impl Api {
 
     // --- plumbing ----------------------------------------------------------
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vault> {
-        match self.vault.lock() {
+    /// Take a lock, recovering it if a panic poisoned it.
+    fn guard<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        match lock.lock() {
             Ok(guard) => guard,
-            // A poisoned lock means a handler panicked mid-operation. The log
-            // is still consistent, because it is written before memory is, so
-            // carrying on is safer than refusing every request afterwards.
-            Err(poisoned) => poisoned.into_inner(),
+            Err(poisoned) => {
+                lock.clear_poison();
+                poisoned.into_inner()
+            }
         }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vault> {
+        let poisoned = self.vault.is_poisoned();
+        let mut guard = Self::guard(&self.vault);
+
+        if poisoned {
+            // A handler panicked partway through an operation. Memory may now
+            // disagree with the log: an event can be durable while the state
+            // built from it is not, which would leave a revoked token working.
+            // Sealing forces the next unseal to rebuild state from the file,
+            // which is the only version that is certainly right.
+            ls_log::error!("a request panicked mid-operation; sealing to force a rebuild");
+            guard.seal();
+        }
+
+        guard
     }
 
     /// Resolve the bearer token, then run `work` with the caller and the vault.
@@ -559,6 +619,41 @@ impl Api {
     }
 }
 
+/// Refuse anything a page on another site could send us without asking first.
+///
+/// A browser will post to 127.0.0.1 from any website without a preflight, so
+/// long as the request looks like something a form could produce. Requiring
+/// `application/json` on every request that changes state forces the preflight,
+/// which such a page cannot satisfy. This matters most for the endpoints that
+/// need no token: without it, a visited page can call `init` on a fresh vault,
+/// after which the operator can never initialise it and never saw the shares.
+fn refuse_cross_origin(request: &Request) -> Option<Response> {
+    if matches!(request.method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+        return None;
+    }
+
+    let json = request
+        .header("content-type")
+        .map(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case("application/json")
+        })
+        .unwrap_or(false);
+
+    if json {
+        None
+    } else {
+        Some(error_response(
+            415,
+            "this endpoint needs a content-type of application/json",
+        ))
+    }
+}
+
 fn unseal_body(sealed: bool, progress: usize, threshold: u8) -> Value {
     Value::object([
         ("sealed", Value::Bool(sealed)),
@@ -591,10 +686,22 @@ fn text(body: &Value, name: &str) -> Option<String> {
     body.get(name).and_then(Value::as_str).map(str::to_owned)
 }
 
-fn small_number(body: &Value, name: &str) -> Option<u8> {
-    body.get(name)
-        .and_then(Value::as_i64)
-        .and_then(|n| u8::try_from(n).ok())
+/// Read the threshold and share count.
+///
+/// Absent means the default. Present but unusable is an error: quietly falling
+/// back to one share would, on a re-split, destroy an existing quorum because
+/// of a typo.
+fn share_parameters(body: &Value) -> Result<(u8, u8), Response> {
+    let read = |name: &str| -> Result<u8, Response> {
+        match body.get(name) {
+            None | Some(Value::Null) => Ok(1),
+            Some(Value::Int(n)) => u8::try_from(*n)
+                .map_err(|_| error_response(400, "threshold and shares must be between 1 and 255")),
+            Some(_) => Err(error_response(400, "threshold and shares must be numbers")),
+        }
+    };
+
+    Ok((read("threshold")?, read("shares")?))
 }
 
 fn method_not_allowed() -> Response {
@@ -619,7 +726,11 @@ fn vault_error(error: &VaultError) -> Response {
         VaultError::Forbidden => 403,
         VaultError::NotFound(_) => 404,
         VaultError::UnsealFailed | VaultError::BadShare | VaultError::Invalid(_) => 400,
-        VaultError::Crypto | VaultError::Store(_) => 500,
+        VaultError::ValueTooLarge { .. } => 413,
+        VaultError::UnreadableBarrier(_)
+        | VaultError::InitIncomplete
+        | VaultError::Crypto
+        | VaultError::Store(_) => 500,
     };
 
     if status >= 500 {

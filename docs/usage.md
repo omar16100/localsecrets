@@ -93,9 +93,9 @@ A restarted server comes back sealed. This is the point: the files on disk are i
 lsec rekey --threshold 2 --shares 4
 ```
 
-Splits the master key again and prints a fresh set. The old shares stop working straight away, and the secrets are untouched: only the shares that reach them change. Use this when a share is lost, or when a custodian leaves.
+Generates a new master key and a new root key, re-wraps each project's data key, and rewrites the store so the old barrier stops existing. The old shares stop working straight away and the secrets are untouched. Use this when a share is lost, or when a custodian leaves.
 
-It does not help if a share was exposed rather than lost: anyone with a copy of the store file from before the re-split, and a quorum of the old shares, can still open that copy. See [security.md](security.md).
+It does not help if a share was *exposed* rather than lost: anyone with a copy of the store file from before the re-split, and a quorum of the old shares, can still open that copy. See [security.md](security.md).
 
 ## Configuration
 

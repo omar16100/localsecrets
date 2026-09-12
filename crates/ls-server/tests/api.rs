@@ -49,6 +49,13 @@ impl Harness {
         self.call("DELETE", path, token, "")
     }
 
+    fn raw(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> u16 {
+        self.client
+            .send(method, path, headers, body.as_bytes())
+            .map(|response| response.status)
+            .unwrap_or(0)
+    }
+
     fn call(&self, method: &str, path: &str, token: Option<&str>, body: &str) -> (u16, Value) {
         let bearer = token.map(|t| format!("Bearer {t}"));
         let mut headers: Vec<(&str, &str)> = vec![("content-type", "application/json")];
@@ -889,4 +896,194 @@ fn a_re_split_never_returns_a_root_token() {
     );
 
     assert!(body.get("root_token").is_none(), "{body}");
+}
+
+// --- reachable from a browser tab ------------------------------------------
+
+#[test]
+fn a_state_changing_request_without_a_json_content_type_is_refused() {
+    // A page on any website can post to 127.0.0.1 without a preflight, as long
+    // as it keeps to the content types a form could send. Insisting on
+    // application/json forces the preflight, which such a page cannot satisfy.
+    // Without this, a visited page can squat `init` on a fresh vault: the
+    // operator can then never initialise it and never saw the shares.
+    let api = Harness::start("csrf-content-type");
+
+    assert_eq!(
+        api.raw("POST", "/v1/sys/init", &[], r#"{"threshold":1,"shares":1}"#),
+        415
+    );
+    assert_eq!(
+        api.raw(
+            "POST",
+            "/v1/sys/init",
+            &[("content-type", "text/plain")],
+            r#"{"threshold":1,"shares":1}"#
+        ),
+        415
+    );
+    assert_eq!(
+        api.raw(
+            "POST",
+            "/v1/sys/init",
+            &[("content-type", "application/json")],
+            r#"{"threshold":1,"shares":1}"#
+        ),
+        200
+    );
+}
+
+#[test]
+fn an_empty_bodied_state_changing_request_still_needs_the_content_type() {
+    // `init` with no body at all would otherwise default to one share and be
+    // sendable cross-origin as a simple request.
+    let api = Harness::start("csrf-empty-body");
+
+    assert_eq!(api.raw("POST", "/v1/sys/init", &[], ""), 415);
+}
+
+#[test]
+fn reading_is_not_restricted_by_the_content_type_rule() {
+    let api = Harness::start("csrf-get");
+
+    assert_eq!(api.raw("GET", "/v1/sys/health", &[], ""), 200);
+}
+
+// --- no free map of what exists --------------------------------------------
+
+#[test]
+fn a_machine_token_cannot_learn_which_projects_exist() {
+    // Answering 404 for a project that is absent and 403 for one that is
+    // present hands a confined token a free listing of everything.
+    let api = Harness::start("oracle");
+    let session = api.with_project();
+    let (_, body) = api.post(
+        "/v1/tokens",
+        Some(&session),
+        r#"{"project":"demo","environment":"dev","label":"ci"}"#,
+    );
+    let machine = body
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
+    api.post(
+        "/v1/projects",
+        Some(&session),
+        r#"{"slug":"other","name":"Other"}"#,
+    );
+
+    let absent = api
+        .get(
+            "/v1/projects/nosuchproject/envs/dev/secrets",
+            Some(&machine),
+        )
+        .0;
+    let present = api
+        .get("/v1/projects/other/envs/dev/secrets", Some(&machine))
+        .0;
+
+    assert_eq!(
+        absent, present,
+        "a confined token learned which project exists ({absent} vs {present})"
+    );
+    assert_eq!(absent, 403);
+}
+
+// --- parameters are not silently ignored ------------------------------------
+
+#[test]
+fn nonsense_share_parameters_are_refused_rather_than_defaulted() {
+    // Falling back to one share on a malformed rekey would quietly destroy an
+    // existing quorum.
+    let api = Harness::start("params");
+    let (_, session) = api.ready();
+
+    assert_eq!(
+        api.post(
+            "/v1/sys/rekey",
+            Some(&session),
+            r#"{"threshold":"3","shares":"5"}"#
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        api.post(
+            "/v1/sys/rekey",
+            Some(&session),
+            r#"{"threshold":300,"shares":5}"#
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        api.post(
+            "/v1/sys/rekey",
+            Some(&session),
+            r#"{"threshold":2,"shares":4}"#
+        )
+        .0,
+        200
+    );
+}
+
+#[test]
+fn a_value_too_large_to_store_is_a_client_error_not_a_server_error() {
+    let api = Harness::start("too-large");
+    let session = api.with_project();
+
+    let huge = "x".repeat(70_000);
+    let body = Value::object([("value", Value::from(huge.as_str()))]).to_string();
+
+    let (status, _) = api.put(
+        "/v1/projects/demo/envs/dev/secrets/BIG",
+        Some(&session),
+        &body,
+    );
+
+    assert_eq!(
+        status, 413,
+        "the caller sent too much; that is not a fault here"
+    );
+}
+
+#[test]
+fn a_bulk_write_with_one_bad_key_writes_nothing() {
+    let api = Harness::start("bulk-atomic");
+    let session = api.with_project();
+
+    let (status, _) = api.post(
+        "/v1/projects/demo/envs/dev/secrets",
+        Some(&session),
+        r#"{"secrets":{"GOOD":"one","bad key":"two"}}"#,
+    );
+
+    assert!(status >= 400);
+    let (_, body) = api.get("/v1/projects/demo/envs/dev/secrets", Some(&session));
+    assert!(
+        body.get("secrets").and_then(|s| s.get("GOOD")).is_none(),
+        "a refused bulk write left part of itself behind: {body}"
+    );
+}
+
+#[test]
+fn the_unseal_ceremony_cannot_be_fed_rubbish_without_limit() {
+    // Share checksums are unkeyed, so anyone can mint well-formed nonsense.
+    // Enough of it reaches the threshold, fails, and clears whatever progress
+    // the operator had made; repeated freely, the vault never opens.
+    let api = Harness::start("ceremony-limit");
+    let (_, session) = api.ready();
+    api.post("/v1/sys/seal", Some(&session), "");
+
+    let mut refused = false;
+    for _ in 0..80 {
+        let (status, _) = api.post("/v1/sys/unseal", None, r#"{"share":"not a share"}"#);
+        if status == 429 {
+            refused = true;
+            break;
+        }
+    }
+
+    assert!(refused, "the ceremony can be poisoned without limit");
 }

@@ -138,6 +138,17 @@ fn rekey(common: &Common, args: &[String]) -> Result<ExitCode, String> {
 }
 
 fn unseal(common: &Common, args: &[String]) -> Result<ExitCode, String> {
+    if args.iter().any(|argument| argument == "--reset") {
+        let answer = common.connect()?.call(
+            "POST",
+            "/v1/sys/unseal",
+            Some(Value::object([("reset", Value::Bool(true))])),
+        )?;
+        let threshold = answer.get("threshold").and_then(Value::as_i64).unwrap_or(0);
+        println!("attempt abandoned: 0 of {threshold} shares");
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let share = match args.first() {
         Some(share) => {
             eprintln!(

@@ -166,3 +166,66 @@ fn display_is_the_rfc_3339_form() {
         "2025-09-12T00:00:00Z"
     );
 }
+
+#[test]
+fn every_timestamp_that_can_be_built_can_be_read_back() {
+    // An unparseable timestamp inside a stored event would fail the replay for
+    // good, so there must be no way to make one. A clock set to 1900, or to
+    // the year 40000, has to land somewhere readable.
+    for seconds in [
+        i64::MIN,
+        i64::MIN + 1,
+        -62_167_219_201,
+        Timestamp::MIN_UNIX,
+        Timestamp::MIN_UNIX + 1,
+        -1,
+        0,
+        Timestamp::MAX_UNIX - 1,
+        Timestamp::MAX_UNIX,
+        253_402_300_800,
+        i64::MAX - 1,
+        i64::MAX,
+    ] {
+        let rendered = Timestamp::from_unix(seconds).to_rfc3339();
+        assert_eq!(
+            rendered.len(),
+            20,
+            "{seconds} rendered as {rendered}, which is not the fixed form"
+        );
+        assert!(
+            Timestamp::parse_rfc3339(&rendered).is_some(),
+            "{seconds} rendered as {rendered}, which cannot be read back"
+        );
+    }
+}
+
+#[test]
+fn timestamps_are_held_inside_the_range_that_can_be_written() {
+    assert_eq!(
+        Timestamp::from_unix(i64::MAX).unix_seconds(),
+        Timestamp::MAX_UNIX
+    );
+    assert_eq!(
+        Timestamp::from_unix(i64::MIN).unix_seconds(),
+        Timestamp::MIN_UNIX
+    );
+    assert_eq!(
+        Timestamp::from_unix(Timestamp::MAX_UNIX)
+            .plus_seconds(i64::MAX)
+            .unix_seconds(),
+        Timestamp::MAX_UNIX,
+        "moving forward must not leave the writable range"
+    );
+}
+
+#[test]
+fn the_range_boundaries_are_the_years_the_format_allows() {
+    assert_eq!(
+        Timestamp::from_unix(Timestamp::MIN_UNIX).to_rfc3339(),
+        "0000-01-01T00:00:00Z"
+    );
+    assert_eq!(
+        Timestamp::from_unix(Timestamp::MAX_UNIX).to_rfc3339(),
+        "9999-12-31T23:59:59Z"
+    );
+}

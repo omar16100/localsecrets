@@ -1,7 +1,7 @@
 //! Reading and parsing an HTTP/1.1 request.
 
 use crate::{HttpError, Limits};
-use std::io::{BufRead, Read};
+use std::io::BufRead;
 use std::time::Instant;
 
 /// A parsed request.
@@ -121,34 +121,70 @@ impl std::fmt::Debug for Request {
 
 /// Read the request line and headers, stopping at the blank line.
 ///
-/// The reader is capped at `max_head` bytes, so an endless header line cannot
-/// grow the buffer without bound.
+/// Bytes are taken from the reader's buffer a chunk at a time rather than a
+/// line at a time. Reading by line looks tidier but hides a hole: a client that
+/// sends bytes and never a newline stays inside one read for as long as the
+/// head limit allows, and the deadline between lines never comes round. Working
+/// in chunks means every arrival is a chance to give up.
+///
+/// Only the bytes belonging to the head are consumed, so the body is left where
+/// the caller can read it.
 fn read_head<R: BufRead>(
     reader: &mut R,
     limits: &Limits,
     started: Instant,
 ) -> Result<Vec<u8>, HttpError> {
-    let mut limited = reader.take(limits.max_head as u64);
-    let mut head = Vec::with_capacity(512);
+    const TERMINATOR: &[u8] = b"\r\n\r\n";
+
+    let mut head: Vec<u8> = Vec::with_capacity(512);
 
     loop {
         if started.elapsed() > limits.head_deadline {
             return Err(HttpError::TimedOut);
         }
-        let before = head.len();
-        let read = limited.read_until(b'\n', &mut head)?;
-        if read == 0 {
+
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(HttpError::TimedOut),
+        };
+
+        if available.is_empty() {
             return Err(if head.is_empty() {
                 HttpError::Incomplete
             } else {
-                HttpError::HeadTooLarge
+                HttpError::Malformed("head ended without a blank line")
             });
         }
-        if head[head.len() - 1] != b'\n' {
-            return Err(HttpError::HeadTooLarge);
-        }
-        if head[before..] == *b"\r\n" {
-            return Ok(head);
+
+        // The terminator may straddle two chunks, so look back over the last
+        // three bytes already held as well.
+        let overlap = head.len().min(TERMINATOR.len() - 1);
+        let search_from = head.len() - overlap;
+
+        let take = available
+            .len()
+            .min(limits.max_head.saturating_sub(head.len()));
+        head.extend_from_slice(&available[..take]);
+
+        let found = head[search_from..]
+            .windows(TERMINATOR.len())
+            .position(|window| window == TERMINATOR)
+            .map(|at| search_from + at + TERMINATOR.len());
+
+        match found {
+            Some(end) => {
+                // Consume only what belonged to the head.
+                reader.consume(end - search_from - overlap);
+                head.truncate(end);
+                return Ok(head);
+            }
+            None => {
+                reader.consume(take);
+                if head.len() >= limits.max_head {
+                    return Err(HttpError::HeadTooLarge);
+                }
+            }
         }
     }
 }

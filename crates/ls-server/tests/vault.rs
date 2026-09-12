@@ -229,6 +229,50 @@ fn a_failed_unseal_clears_the_progress_so_the_ceremony_can_restart() {
 }
 
 #[test]
+fn a_different_share_with_the_same_index_is_not_silently_ignored() {
+    // After a re-split, share 1 of the new set and share 1 of the old set are
+    // different numbers that happen to share an index. Treating the second as
+    // a repeat of the first drops a valid share on the floor, and the operator
+    // sees their good shares do nothing.
+    // Threshold three, so two shares can be offered without the vault trying
+    // to recombine them yet.
+    let mut fixture = ready("share-index-collision");
+    let old = fixture.shares.clone();
+    let fresh = fixture.vault.rekey(&fixture.caller, 3, 5).unwrap().shares;
+    fixture.vault.seal();
+
+    let first = fixture.vault.submit_share(&old[0]).unwrap();
+    assert_eq!(first.progress, 1);
+
+    let second = fixture.vault.submit_share(&fresh[0]).unwrap();
+    assert_eq!(
+        second.progress, 2,
+        "a share with different bytes must count, whatever its index"
+    );
+}
+
+#[test]
+fn the_ceremony_recovers_after_shares_from_two_sets_are_mixed() {
+    let mut fixture = ready("share-mixed");
+    let old = fixture.shares.clone();
+    let fresh = fixture.vault.rekey(&fixture.caller, 2, 3).unwrap().shares;
+    let _ = &old;
+    fixture.vault.seal();
+
+    // One from each set reaches the threshold and fails, as it should.
+    fixture.vault.submit_share(&old[0]).unwrap();
+    assert!(matches!(
+        fixture.vault.submit_share(&fresh[1]),
+        Err(VaultError::UnsealFailed)
+    ));
+
+    // And the operator can simply carry on with the right set.
+    fixture.vault.submit_share(&fresh[0]).unwrap();
+    fixture.vault.submit_share(&fresh[1]).unwrap();
+    assert!(!fixture.vault.is_sealed());
+}
+
+#[test]
 fn unseal_progress_can_be_abandoned() {
     let mut fixture = ready("reset-unseal");
     fixture.vault.seal();
@@ -1306,6 +1350,106 @@ fn a_re_split_survives_a_restart() {
             .unwrap()
             .as_slice(),
         b"kept"
+    );
+}
+
+#[test]
+fn a_re_split_leaves_no_way_back_to_the_old_shares() {
+    // Superseding the old barrier is not enough: if it is still in the file,
+    // an old quorum opens the vault again, and truncating back to it reverts
+    // the re-split entirely. The file must stop containing it.
+    let mut fixture = ready("rekey-no-way-back");
+    fixture.vault.rekey(&fixture.caller, 1, 1).unwrap();
+
+    let plain = ls_store::Log::open(&fixture.dir.file())
+        .unwrap()
+        .read_plain()
+        .unwrap();
+
+    assert_eq!(
+        plain.len(),
+        1,
+        "the old barrier is still in the file, so the old shares still work"
+    );
+}
+
+#[test]
+fn the_audit_trail_survives_a_re_split() {
+    let mut fixture = ready("rekey-audit");
+    fixture
+        .vault
+        .create_project(&fixture.caller, "demo", "Demo")
+        .unwrap();
+    fixture
+        .vault
+        .create_environment(&fixture.caller, "demo", "dev", "Development")
+        .unwrap();
+    fixture
+        .vault
+        .set_secret(&fixture.caller, "demo", "dev", "K", b"v")
+        .unwrap();
+    let before = fixture.vault.audit_trail(&fixture.caller).unwrap().len();
+
+    fixture.vault.rekey(&fixture.caller, 1, 1).unwrap();
+
+    let after = fixture.vault.audit_trail(&fixture.caller).unwrap();
+    assert!(
+        after.len() > before,
+        "the trail shrank from {before} to {}",
+        after.len()
+    );
+    assert!(
+        after.iter().any(|entry| entry.action == "vault.rekey"),
+        "the re-split itself should be recorded"
+    );
+}
+
+#[test]
+fn everything_still_works_through_two_re_splits() {
+    let mut fixture = ready("rekey-twice");
+    fixture
+        .vault
+        .create_project(&fixture.caller, "demo", "Demo")
+        .unwrap();
+    fixture
+        .vault
+        .create_environment(&fixture.caller, "demo", "dev", "Development")
+        .unwrap();
+    fixture
+        .vault
+        .set_secret(&fixture.caller, "demo", "dev", "K", b"v")
+        .unwrap();
+
+    fixture.vault.rekey(&fixture.caller, 1, 1).unwrap();
+    let second = fixture.vault.rekey(&fixture.caller, 2, 3).unwrap();
+
+    fixture
+        .vault
+        .set_secret(&fixture.caller, "demo", "dev", "AFTER", b"w")
+        .unwrap();
+
+    let path = fixture.dir.file();
+    let session = fixture.session.clone();
+    drop(fixture.vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.submit_share(&second.shares[0]).unwrap();
+    reopened.submit_share(&second.shares[1]).unwrap();
+
+    let caller = reopened.authenticate(&session).unwrap();
+    assert_eq!(
+        reopened
+            .get_secret(&caller, "demo", "dev", "K")
+            .unwrap()
+            .as_slice(),
+        b"v"
+    );
+    assert_eq!(
+        reopened
+            .get_secret(&caller, "demo", "dev", "AFTER")
+            .unwrap()
+            .as_slice(),
+        b"w"
     );
 }
 

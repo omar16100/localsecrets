@@ -12,6 +12,13 @@
 pub struct Timestamp(i64);
 
 impl Timestamp {
+    /// Earliest instant that can be written in the fixed RFC 3339 form used
+    /// here: `0000-01-01T00:00:00Z`.
+    pub const MIN_UNIX: i64 = -62_167_219_200;
+
+    /// Latest such instant: `9999-12-31T23:59:59Z`.
+    pub const MAX_UNIX: i64 = 253_402_300_799;
+
     /// The current time, read from the system clock.
     ///
     /// A clock set before 1970 yields a negative value rather than an error;
@@ -19,14 +26,29 @@ impl Timestamp {
     pub fn now() -> Self {
         let epoch = std::time::UNIX_EPOCH;
         match std::time::SystemTime::now().duration_since(epoch) {
-            Ok(elapsed) => Self(i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)),
-            Err(before) => Self(-i64::try_from(before.duration().as_secs()).unwrap_or(i64::MAX)),
+            Ok(elapsed) => Self::from_unix(i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)),
+            Err(before) => Self::from_unix(
+                i64::try_from(before.duration().as_secs())
+                    .map(|seconds| -seconds)
+                    .unwrap_or(i64::MIN),
+            ),
         }
     }
 
     /// Build from seconds since the epoch.
+    ///
+    /// Held inside the range the fixed rendering can express. A timestamp
+    /// outside it would render as something `parse_rfc3339` refuses, and an
+    /// event carrying one would fail every later replay: a host with a badly
+    /// wrong clock would write a store that can never be opened again.
     pub const fn from_unix(seconds: i64) -> Self {
-        Self(seconds)
+        if seconds < Self::MIN_UNIX {
+            Self(Self::MIN_UNIX)
+        } else if seconds > Self::MAX_UNIX {
+            Self(Self::MAX_UNIX)
+        } else {
+            Self(seconds)
+        }
     }
 
     /// Seconds since the epoch.
@@ -34,9 +56,10 @@ impl Timestamp {
         self.0
     }
 
-    /// Move forward (or back, for a negative amount) by whole seconds.
+    /// Move forward (or back, for a negative amount) by whole seconds, staying
+    /// inside the writable range.
     pub const fn plus_seconds(self, seconds: i64) -> Self {
-        Self(self.0.saturating_add(seconds))
+        Self::from_unix(self.0.saturating_add(seconds))
     }
 
     /// Render as `YYYY-MM-DDTHH:MM:SSZ`.

@@ -89,10 +89,40 @@
 - [x] cargo fmt across the workspace
 - [x] github.com/omar16100/localsecrets, public, CI green on the first run
 
+## M9 — second defect hunt applied
+- [x] blocker: a failed audit write during a re-split could destroy the vault
+      (new shares dropped, new barrier already on disk). Re-split is now one
+      rewrite, and the last thing that can fail
+- [x] a re-split rotates the root key and rewrites the file, so the old
+      barrier stops existing rather than merely being superseded
+- [x] the read path fails closed on an impossible frame, as the open path does
+- [x] a barrier that cannot be read stops the vault opening, instead of
+      reporting "not initialised" and inviting a second init over sealed data
+- [x] a store holding records but no barrier is refused
+- [x] identifiers never fall back to a clock reading, which could repeat
+- [x] timestamps are held inside the range that can be read back, so a wrong
+      clock cannot write an event that breaks every later replay
+- [x] state-changing requests need a JSON content type, so a page on another
+      site cannot reach init or unseal
+- [x] the unauthenticated ceremony endpoints share a rate limit
+- [x] a confined token gets the same answer for an absent and a present name
+- [x] a poisoned login limiter no longer disables the limit
+- [x] a panic mid-operation seals the vault rather than serving state that may
+      disagree with the file
+- [x] the request deadline is checked on every arrival of bytes, not between
+      lines, so a client that never completes one is still cut off
+- [x] share parameters that are present but unusable are refused, not defaulted
+- [x] a bulk write validates everything before writing anything
+- [x] an oversized value is a client error, not a server error
+- [x] the root token is spent by the first account existing, with no second
+      write and so no window
+- [x] a read or delete that finds nothing is recorded too
+- [x] lsec unseal --reset, which the API supported and the client could not reach
+
 ## Next, if it is picked up again
 - [ ] Wire compaction to a command, so deleting a secret can also remove its
       earlier ciphertext from the file
 - [ ] Secret versioning and rollback (the log already holds the history)
 - [ ] A read-only web view, or Postgres, both deliberately deferred in v1
-- [ ] Test the store's "a failed append poisons the log" path, which is
-      implemented but only reachable through a real I/O error
+- [ ] Wire compaction to a command of its own; re-splitting uses it, so the
+      machinery is exercised, but there is no way to ask for it directly

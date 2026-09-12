@@ -38,7 +38,11 @@ impl Api {
 
         let bearer = self.token.as_ref().map(|token| format!("Bearer {token}"));
         let mut headers: Vec<(&str, &str)> = Vec::new();
-        if !rendered.is_empty() {
+
+        // Sent on everything that changes state, empty body or not: the server
+        // insists on it so that a page on another site cannot reach these
+        // endpoints without a preflight it can never satisfy.
+        if method != "GET" {
             headers.push(("content-type", "application/json"));
         }
         if let Some(bearer) = &bearer {

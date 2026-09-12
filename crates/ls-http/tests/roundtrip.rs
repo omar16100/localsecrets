@@ -341,6 +341,41 @@ fn a_client_that_dribbles_its_head_is_cut_off() {
 }
 
 #[test]
+fn a_client_that_never_finishes_a_header_line_is_cut_off() {
+    // Checking the deadline between lines is not enough: a client that sends
+    // bytes but never a newline stays inside one read, and holds the worker
+    // for as long as the head limit allows.
+    use std::io::{Read, Write};
+    let limits = Limits {
+        head_deadline: std::time::Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let (handle, client) = serve_with(limits, echo);
+
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    socket.write_all(b"GET / HTTP/1.1\r\nx-pad: ").unwrap();
+    socket.flush().unwrap();
+
+    let started = std::time::Instant::now();
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if socket.write_all(b"a").is_err() || socket.flush().is_err() {
+            break;
+        }
+    }
+
+    let mut answer = String::new();
+    let _ = socket.read_to_string(&mut answer);
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "the server held the connection for {:?}",
+        started.elapsed()
+    );
+    handle.shutdown();
+}
+
+#[test]
 fn a_client_that_dribbles_its_body_is_cut_off() {
     use std::io::{Read, Write};
     let limits = Limits {

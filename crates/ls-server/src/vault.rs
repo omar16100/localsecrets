@@ -34,6 +34,11 @@ pub enum VaultError {
     NotInitialized,
     /// The shares did not reconstruct a key that opens the barrier.
     UnsealFailed,
+    /// The store holds a barrier this build cannot read.
+    UnreadableBarrier(&'static str),
+    /// Initialisation wrote the barrier but could not finish. The store holds
+    /// nothing yet, so the remedy is to remove it and start again.
+    InitIncomplete,
     /// The share could not be read.
     BadShare,
     /// Wrong email or password. Deliberately one error for both.
@@ -46,6 +51,13 @@ pub enum VaultError {
     Conflict(&'static str),
     /// The request does not make sense.
     Invalid(&'static str),
+    /// The value offered is larger than a secret may be.
+    ValueTooLarge {
+        /// Size offered.
+        len: usize,
+        /// Largest accepted.
+        limit: usize,
+    },
     /// A cryptographic operation failed.
     Crypto,
     /// The log failed.
@@ -59,12 +71,21 @@ impl std::fmt::Display for VaultError {
             Self::AlreadyInitialized => f.write_str("already initialised"),
             Self::NotInitialized => f.write_str("not initialised"),
             Self::UnsealFailed => f.write_str("those shares do not open this vault"),
+            Self::UnreadableBarrier(why) => {
+                write!(f, "the store holds a barrier this build cannot read: {why}")
+            }
+            Self::InitIncomplete => f.write_str(
+                "initialisation could not be completed; remove the data directory and run init again",
+            ),
             Self::BadShare => f.write_str("that is not a valid unseal share"),
             Self::BadCredentials => f.write_str("wrong email or password"),
             Self::Forbidden => f.write_str("not allowed"),
             Self::NotFound(what) => write!(f, "no such {what}"),
             Self::Conflict(what) => write!(f, "that {what} already exists"),
             Self::Invalid(what) => write!(f, "invalid {what}"),
+            Self::ValueTooLarge { len, limit } => {
+                write!(f, "a secret value of {len} bytes exceeds the limit of {limit}")
+            }
             Self::Crypto => f.write_str("a cryptographic operation failed"),
             Self::Store(e) => write!(f, "{e}"),
         }
@@ -201,13 +222,28 @@ impl Vault {
             );
         }
 
-        // The newest barrier wins: re-splitting the shares appends another one
-        // rather than editing the first, because the log is append-only.
-        let barrier = log
-            .read_plain()?
-            .iter()
-            .rev()
-            .find_map(|payload| Barrier::from_bytes(payload).ok());
+        // Only barriers are stored in the clear, and re-splitting rewrites the
+        // file rather than appending, so there is at most one. If it is there
+        // and cannot be read, stop: reporting "not initialised" would let an
+        // unauthenticated init lay a second key hierarchy over sealed data
+        // that nothing could then open.
+        let plain = log.read_plain()?;
+        if plain.is_empty() && !log.is_empty() {
+            // Records but no barrier: an init that failed partway, or a file
+            // that has lost its head. Calling that "not initialised" would
+            // invite a second init to lay a new key hierarchy over data the
+            // new keys can never read.
+            return Err(VaultError::UnreadableBarrier(
+                "the store holds records but no barrier",
+            ));
+        }
+
+        let barrier = match plain.last() {
+            Some(payload) => {
+                Some(Barrier::from_bytes(payload).map_err(VaultError::UnreadableBarrier)?)
+            }
+            None => None,
+        };
 
         Ok(Self {
             log,
@@ -256,7 +292,7 @@ impl Vault {
         // failure here leaves a vault that is initialised but whose shares were
         // never handed back, and init refuses to run again.
         let issued = token::generate().map_err(|_| VaultError::Crypto)?;
-        let token_id = new_id();
+        let token_id = new_id()?;
 
         let barrier = Barrier {
             threshold,
@@ -269,6 +305,9 @@ impl Vault {
         self.barrier = Some(barrier);
         self.root_key = Some(root_key);
 
+        // The barrier is already on disk, so a failure here leaves a vault that
+        // is initialised but has no way to create its first account. There is
+        // nothing to lose at this point, so say plainly what to do about it.
         self.commit(Event::TokenIssued {
             id: token_id,
             token_hash: issued.hash().as_bytes().to_vec(),
@@ -279,7 +318,8 @@ impl Vault {
             label: Some("root".to_owned()),
             expires_at: None,
             created_at: Timestamp::now(),
-        })?;
+        })
+        .map_err(|_| VaultError::InitIncomplete)?;
         let root_token = issued.into_secret();
 
         Ok(InitOutcome {
@@ -289,14 +329,23 @@ impl Vault {
         })
     }
 
-    /// Split the master key again, into a fresh set of shares.
+    /// Split the master key again, into a fresh set of shares, and rotate the
+    /// root key underneath them.
     ///
-    /// The root key is unchanged, so every stored value stays readable; only
-    /// the shares that reach it are replaced. This is what makes a lost share,
-    /// or a change of custodians, an ordinary operation rather than a reason to
-    /// rebuild the vault and re-enter every secret.
+    /// The whole file is rewritten under a new root key and the old barrier
+    /// stops existing. Superseding it would not have been enough: an
+    /// append-only file keeps what it is given, so an old quorum would still
+    /// open the vault from the same file, and cutting the file back to the old
+    /// barrier would undo the re-split completely.
     ///
-    /// The old shares stop working the moment this returns.
+    /// Secret values keep their project data keys, which are simply re-wrapped,
+    /// so nothing has to be decrypted and re-encrypted. The history and the
+    /// audit trail are carried across.
+    ///
+    /// What this cannot do is reach copies of the file made earlier. Anyone
+    /// holding a quorum of the old shares and an older copy can still open
+    /// that copy. Re-splitting answers a lost share or a change of custodians;
+    /// an exposed share needs a new vault and new values.
     pub fn rekey(
         &mut self,
         caller: &Caller,
@@ -306,30 +355,90 @@ impl Vault {
         self.require_unsealed()?;
         self.require(caller, Capability::Administer)?;
 
-        let root_key = self.root_key.as_ref().ok_or(VaultError::Sealed)?;
+        let old_root = self.root_key.as_ref().ok_or(VaultError::Sealed)?;
 
-        // Everything that can fail happens before the write, so a refusal
-        // leaves the existing shares working.
+        // Read the whole history back under the key that is going away.
+        let mut events = Vec::new();
+        for record in self.log.read_records(old_root)? {
+            if record.sealed {
+                events.push(Event::from_bytes(&record.payload)?);
+            }
+        }
+
+        let new_root = DataKey::generate().map_err(|_| VaultError::Crypto)?;
+
+        // Project data keys move across to the new root key. The keys
+        // themselves do not change, so no stored value needs touching.
+        let mut carried = Vec::with_capacity(events.len() + 1);
+        for event in events {
+            match event {
+                Event::ProjectCreated {
+                    id,
+                    slug,
+                    name,
+                    data_key,
+                    created_at,
+                } => {
+                    let context = project_key_context(&id);
+                    let unwrapped = old_root
+                        .unwrap_key(&(&data_key).into(), &context)
+                        .map_err(|_| VaultError::Crypto)?;
+                    let rewrapped = new_root
+                        .wrap(&unwrapped, &context)
+                        .map_err(|_| VaultError::Crypto)?;
+
+                    carried.push(Event::ProjectCreated {
+                        id,
+                        slug,
+                        name,
+                        data_key: Sealed::from(rewrapped),
+                        created_at,
+                    });
+                }
+                other => carried.push(other),
+            }
+        }
+
+        carried.push(Event::Audited {
+            at: Timestamp::now(),
+            actor: caller.actor(),
+            action: "vault.rekey".to_owned(),
+            target: "unseal shares".to_owned(),
+            outcome: "ok".to_owned(),
+        });
+
         let master_bytes =
             Zeroizing::new(random::bytes::<MASTER_KEY_LEN>().map_err(|_| VaultError::Crypto)?);
         let split = shamir::split(master_bytes.as_slice(), threshold, shares)
             .map_err(|_| VaultError::Invalid("share configuration"))?;
         let master_key = DataKey::from_bytes(master_bytes.as_slice()).ok_or(VaultError::Crypto)?;
-        let wrapped = master_key
-            .wrap(root_key, &Barrier::context())
+        let wrapped_root = master_key
+            .wrap(&new_root, &Barrier::context())
             .map_err(|_| VaultError::Crypto)?;
 
         let barrier = Barrier {
             threshold,
             shares,
-            root_key: Sealed::from(wrapped),
+            root_key: Sealed::from(wrapped_root),
             created_at: Timestamp::now(),
         };
-        self.log.append_plain(&barrier.to_bytes())?;
-        self.barrier = Some(barrier);
-        self.pending_shares.clear();
 
-        self.record_audit(caller, "vault.rekey", "unseal shares", "ok")?;
+        // One rewrite, through a temporary file and a rename, and the last
+        // thing that can fail. Until it succeeds nothing has changed and the
+        // old shares still work.
+        let payloads: Vec<Vec<u8>> = carried.iter().map(Event::to_bytes).collect();
+        self.log
+            .compact(&new_root, &[barrier.to_bytes()], &payloads)?;
+
+        let mut state = State::default();
+        for event in carried {
+            state.apply(event);
+        }
+
+        self.root_key = Some(new_root);
+        self.barrier = Some(barrier);
+        self.state = state;
+        self.pending_shares.clear();
 
         Ok(InitOutcome {
             shares: split.iter().map(ToString::to_string).collect(),
@@ -356,11 +465,13 @@ impl Vault {
         }
 
         let share = shamir::Share::parse(printed).map_err(|_| VaultError::BadShare)?;
-        if !self
-            .pending_shares
-            .iter()
-            .any(|held| held.index() == share.index())
-        {
+
+        // Offering the same share twice must not count twice. Comparing the
+        // whole share rather than its index matters after a re-split, where
+        // share 1 of the new set and share 1 of the old set are different
+        // numbers that happen to share an index: dropping the second because
+        // of that would make a valid share appear to do nothing.
+        if !self.pending_shares.contains(&share) {
             self.pending_shares.push(share);
         }
 
@@ -458,7 +569,7 @@ impl Vault {
 
         let password_hash =
             password::hash(password).map_err(|_| VaultError::Invalid("password"))?;
-        let id = new_id();
+        let id = new_id()?;
 
         self.commit(Event::UserCreated {
             id: id.clone(),
@@ -466,13 +577,6 @@ impl Vault {
             password_hash,
             created_at: Timestamp::now(),
         })?;
-
-        if caller.kind == TokenKind::Root {
-            self.commit(Event::TokenRevoked {
-                id: caller.token_id.clone(),
-                at: Timestamp::now(),
-            })?;
-        }
 
         Ok(id)
     }
@@ -573,6 +677,14 @@ impl Vault {
             return None;
         }
 
+        // The root token exists to create the first account, so the moment an
+        // account exists it is spent. Deriving that from the state rather than
+        // writing a second record makes it exact: there is no window in which
+        // the account is durable and the token is still alive.
+        if found.kind == TokenKind::Root && !self.state.users.is_empty() {
+            return None;
+        }
+
         Some(Caller {
             token_id: found.id.clone(),
             kind: found.kind,
@@ -592,7 +704,7 @@ impl Vault {
         ttl_seconds: Option<i64>,
     ) -> Result<Zeroizing<String>, VaultError> {
         let issued = token::generate().map_err(|_| VaultError::Crypto)?;
-        let id = new_id();
+        let id = new_id()?;
 
         self.commit(Event::TokenIssued {
             id,
@@ -626,7 +738,7 @@ impl Vault {
             return Err(VaultError::Conflict("project"));
         }
 
-        let id = new_id();
+        let id = new_id()?;
         let data_key = DataKey::generate().map_err(|_| VaultError::Crypto)?;
         let root_key = self.root_key.as_ref().ok_or(VaultError::Sealed)?;
         let wrapped = root_key
@@ -667,7 +779,7 @@ impl Vault {
             return Err(VaultError::Conflict("environment"));
         }
 
-        let id = new_id();
+        let id = new_id()?;
         self.commit(Event::EnvironmentCreated {
             id: id.clone(),
             project_id,
@@ -725,7 +837,8 @@ impl Vault {
     ) -> Result<(), VaultError> {
         self.require_unsealed()?;
         let key = validate::secret_key(key)?;
-        let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
+        let (project_id, environment_id) =
+            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
         if let Err(error) = self.authorise(
@@ -741,7 +854,12 @@ impl Vault {
         let data_key = self.project_data_key(&project_id)?;
         let sealed = data_key
             .seal(value, &secret_context(&project_id, &environment_id, &key))
-            .map_err(|_| VaultError::Crypto)?;
+            .map_err(|error| match error {
+                ls_core::crypto::aead::AeadError::PlaintextTooLarge { len, max } => {
+                    VaultError::ValueTooLarge { len, limit: max }
+                }
+                _ => VaultError::Crypto,
+            })?;
 
         self.commit(Event::SecretSet {
             project_id,
@@ -763,7 +881,8 @@ impl Vault {
         key: &str,
     ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
+        let (project_id, environment_id) =
+            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
         if let Err(error) = self.authorise(
@@ -776,12 +895,14 @@ impl Vault {
             return Err(error);
         }
 
-        let stored = self
+        let Some(stored) = self
             .state
             .secret(&project_id, &environment_id, key)
-            .ok_or(VaultError::NotFound("secret"))?
-            .value
-            .clone();
+            .map(|secret| secret.value.clone())
+        else {
+            self.record_audit(caller, "secret.read", &target, "missing")?;
+            return Err(VaultError::NotFound("secret"));
+        };
 
         let data_key = self.project_data_key(&project_id)?;
         let value = data_key
@@ -803,7 +924,8 @@ impl Vault {
         environment_slug: &str,
     ) -> Result<Vec<RevealedSecret>, VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
+        let (project_id, environment_id) =
+            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}");
 
         if let Err(error) = self.authorise(
@@ -848,7 +970,8 @@ impl Vault {
         key: &str,
     ) -> Result<(), VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
+        let (project_id, environment_id) =
+            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
         if let Err(error) = self.authorise(
@@ -963,6 +1086,58 @@ impl Vault {
         Ok((project.id.clone(), environment.id.clone()))
     }
 
+    /// Resolve for a caller, telling a confined one nothing it should not know.
+    ///
+    /// Answering "no such project" for a name that is absent and "not allowed"
+    /// for one that is present hands a machine token a free listing of
+    /// everything on the server. For such a caller both answers become the
+    /// same refusal.
+    fn resolve_for(
+        &self,
+        caller: &Caller,
+        project_slug: &str,
+        environment_slug: &str,
+    ) -> Result<(String, String), VaultError> {
+        match self.resolve(project_slug, environment_slug) {
+            Ok(pair) => Ok(pair),
+            Err(error) if caller.kind == TokenKind::Machine => {
+                let _ = error;
+                Err(VaultError::Forbidden)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Check that a write would be allowed and is well formed, without writing.
+    ///
+    /// Used to validate a whole batch before any of it is committed.
+    pub fn check_secret(
+        &self,
+        caller: &Caller,
+        project_slug: &str,
+        environment_slug: &str,
+        key: &str,
+        value: &[u8],
+    ) -> Result<(), VaultError> {
+        self.require_unsealed()?;
+        validate::secret_key(key)?;
+        if value.len() > ls_core::crypto::aead::MAX_PLAINTEXT_LEN {
+            return Err(VaultError::ValueTooLarge {
+                len: value.len(),
+                limit: ls_core::crypto::aead::MAX_PLAINTEXT_LEN,
+            });
+        }
+
+        let (project_id, environment_id) =
+            self.resolve_for(caller, project_slug, environment_slug)?;
+        self.authorise(
+            caller,
+            Capability::WriteSecrets,
+            &project_id,
+            &environment_id,
+        )
+    }
+
     /// Check a capability on its own.
     fn require(&self, caller: &Caller, capability: Capability) -> Result<(), VaultError> {
         if capability.granted_to(caller.kind) {
@@ -1036,13 +1211,16 @@ fn secret_context(project_id: &str, environment_id: &str, key: &str) -> Aad {
     Aad::secret_slot(project_id, environment_id, key)
 }
 
-fn new_id() -> String {
-    match random::bytes::<16>() {
-        Ok(bytes) => ls_core::encoding::hex::encode(&bytes),
-        // Identifiers only need to be unique, and a clock reading is unique
-        // enough to keep going with if the entropy pool is momentarily unhappy.
-        Err(_) => format!("t{}", Timestamp::now().unix_seconds()),
-    }
+/// A fresh identifier, or nothing at all.
+///
+/// There is deliberately no fallback. A clock reading looked like a reasonable
+/// one until you notice two environments created in the same second would share
+/// an identifier, and then a machine token scoped to one of them passes the
+/// check for the other. Refusing is the only safe answer, and matches the rest
+/// of the project: entropy failure stops the operation rather than degrading it.
+fn new_id() -> Result<String, VaultError> {
+    let bytes = random::bytes::<16>().map_err(|_| VaultError::Crypto)?;
+    Ok(ls_core::encoding::hex::encode(&bytes))
 }
 
 /// A well-formed argon2id hash of a password nobody has. Verifying against it

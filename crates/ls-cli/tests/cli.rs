@@ -462,6 +462,27 @@ fn the_shares_can_be_re_split_from_the_command_line() {
 }
 
 #[test]
+fn an_unseal_attempt_can_be_abandoned_from_the_command_line() {
+    // Mixing shares from two sets, or a mistyped one, leaves progress that has
+    // to be thrown away. The server has always supported that; the client had
+    // no way to ask for it.
+    let cli = Cli::start("unseal-reset");
+    let shares = cli.ready();
+    cli.stdout(&["seal"]);
+    cli.run_with_stdin(&["unseal"], &format!("{}\n", shares[0]));
+
+    let reset = cli.stdout(&["unseal", "--reset"]);
+    assert!(reset.to_lowercase().contains("0 of"), "got {reset}");
+
+    let after = cli.run_with_stdin(&["unseal"], &format!("{}\n", shares[1]));
+    assert!(
+        String::from_utf8_lossy(&after.stdout).contains("1 of"),
+        "progress should have restarted: {}",
+        String::from_utf8_lossy(&after.stdout)
+    );
+}
+
+#[test]
 fn an_unseal_share_on_the_command_line_warns() {
     // A share is worth more than most secrets, and argv is visible to anyone
     // who can list processes and lands in shell history.

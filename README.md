@@ -19,8 +19,8 @@ lsec run -- npm start                # the child gets the secrets in its environ
 - **Secrets scoped by project and environment**, read and written over a small HTTP API or the CLI.
 - **A seal barrier.** A master key is split into unseal shares with Shamir's scheme and never stored. A restarted server comes back sealed and can read nothing until a quorum of share holders is present.
 - **Machine tokens** confined to one environment, read-only, revocable, with an optional lifetime.
-- **Re-splittable shares.** `lsec rekey` hands out a fresh set without touching the secrets, so a lost share or a change of custodians is an ordinary operation.
-- **An audit trail** of every read, write and delete, including refusals. Key names appear; values never do.
+- **Re-splittable shares.** `lsec rekey` rotates the root key and hands out a fresh set, rewriting the file so the old barrier stops existing. A lost share or a change of custodians is an ordinary operation, not a rebuild.
+- **An audit trail** of every read, write and delete, including refusals and misses. Key names appear; values never do.
 - **An append-only store.** One file. Every change is appended and flushed; a crash leaves a partial tail that the next start discards.
 
 ## Dependencies

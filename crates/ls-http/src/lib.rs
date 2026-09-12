@@ -31,7 +31,9 @@ pub struct Limits {
     ///
     /// A per-read timeout is not enough: a client sending one byte just inside
     /// it holds a worker for as long as it likes. This bounds the request as a
-    /// whole, so a handful of slow clients cannot occupy the pool.
+    /// whole. It is checked on every arrival of bytes, in the head and in the
+    /// body alike, so a client that dribbles without ever completing a line is
+    /// cut off as promptly as one that pauses between them.
     pub head_deadline: std::time::Duration,
 }
 

@@ -29,11 +29,13 @@
 - [x] UTC timestamps and RFC 3339 (ls-core::time)
 
 ## M3 — ls-store append-only log
-- [ ] Record format with a version byte, length prefix and authentication
-- [ ] Append with fsync, replay on startup, in-memory index
-- [ ] Compaction
-- [ ] Data file and directory created mode 0600
-- [ ] Crash-safety tests: truncated tail, corrupted record
+- [x] Record format with a version byte, length prefix and authentication
+- [x] Records bound to their position, so a reorder or replay fails
+- [x] Append with fsync, replay on open, torn-tail repair
+- [x] Compaction through a temporary file and a rename
+- [x] Log file created mode 0600
+- [x] Crash-safety tests: truncated tail, edited record, wrong key
+- [ ] Domain events and the state they fold into
 
 ## M4 — seal/unseal and sessions
 - [ ] init, unseal, seal, health

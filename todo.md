@@ -38,17 +38,18 @@
 - [x] Domain events and the state they fold into
 
 ## M4 — seal/unseal and sessions
-- [ ] init, unseal, seal, health
-- [ ] Unseal progress behind a mutex, with an attempt identity and reset
-- [ ] Init is single-shot even under concurrent calls
-- [ ] Root token kind, and creating the first user
-- [ ] Login, logout, rate limiting, dummy verify on unknown accounts
+- [x] init, unseal, seal, health
+- [x] Unseal progress guarded, duplicate shares ignored, failed attempt resets
+- [x] Init refuses a second time
+- [x] Root token kind, and creating the first user
+- [x] Login, logout, rate limiting, dummy verify on unknown accounts
 
 ## M5 — projects, environments, secrets
-- [ ] Projects and environments
-- [ ] Secrets: get one, list, put, delete, bulk upsert
-- [ ] Machine tokens: issue, list, revoke, expiry, scope
-- [ ] Audit record on every operation
+- [x] Projects and environments
+- [x] Secrets: get one, list, put, delete, bulk write
+- [x] Machine tokens: issue, revoke, expiry, scope
+- [x] Audit record on every operation, including refusals
+- [x] localsecretsd binary with arguments and a 0700 data directory
 
 ## M6 — CLI
 - [ ] Config, project pin, token file

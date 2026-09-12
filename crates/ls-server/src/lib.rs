@@ -6,9 +6,13 @@
 
 #![warn(missing_docs)]
 
+mod api;
 mod barrier;
+mod rate_limit;
 mod validate;
 mod vault;
+
+pub use api::handler;
 
 pub use vault::{
     AuditEntry, Caller, InitOutcome, RevealedSecret, UnsealStatus, Vault, VaultError,

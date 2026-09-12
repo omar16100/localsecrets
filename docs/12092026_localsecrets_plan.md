@@ -61,6 +61,24 @@ Raised in the M1 design review, to be handled in the milestone named:
 - **M5** Single-secret read endpoint, token listing, and a documented rule for who may revoke a token. Bulk upsert is `POST .../secrets`, avoiding a colon in the path.
 - **M6** `lsec set KEY` reading the value from stdin is the primary documented form; passing a value as an argument warns, because argv is visible in shell history and `ps`.
 
+## Published
+
+2026-09-12: github.com/omar16100/localsecrets, MIT, public. CI runs build,
+clippy with warnings denied, the test suite, and a check that the lockfile
+still holds only audited cryptography. Green on Linux and macOS.
+
+## Untested paths
+
+Stated rather than glossed over:
+
+- The store marks itself unusable after a failed append. Reaching that needs a
+  real write or fsync error, which the suite cannot induce, so the guard is
+  implemented and reasoned about but not exercised.
+- Long-running token expiry is tested by issuing already-expired tokens, not
+  by waiting.
+- Multi-user concurrency is exercised only by the parallel test suite, not by
+  a deliberate contention test.
+
 ## Out of scope for v1
 
 RBAC, folders, versioning, secret references, dynamic secrets, rotation, integrations, PKI, PAM, web UI, HA, Postgres, Kubernetes operator, SDKs.

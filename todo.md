@@ -80,3 +80,19 @@
   - [x] a repaired tail is reported to the operator
   - [x] the root token is prompted for, never suggested on a command line
   - [x] security.md corrected: token comparison, dependency count, tail rollback
+
+## M8 — published
+- [x] MIT LICENSE and README
+- [x] CI on Linux and macOS: build, clippy -D warnings, tests
+- [x] CI gate on the dependency policy, so it fails the build rather than
+      living only in a document
+- [x] cargo fmt across the workspace
+- [x] github.com/omar16100/localsecrets, public, CI green on the first run
+
+## Next, if it is picked up again
+- [ ] Wire compaction to a command, so deleting a secret can also remove its
+      earlier ciphertext from the file
+- [ ] Secret versioning and rollback (the log already holds the history)
+- [ ] A read-only web view, or Postgres, both deliberately deferred in v1
+- [ ] Test the store's "a failed append poisons the log" path, which is
+      implemented but only reachable through a real I/O error

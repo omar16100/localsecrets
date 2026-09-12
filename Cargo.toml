@@ -35,6 +35,7 @@ ls-core = { path = "crates/ls-core" }
 ls-json = { path = "crates/ls-json" }
 ls-log = { path = "crates/ls-log" }
 ls-http = { path = "crates/ls-http" }
+ls-server = { path = "crates/ls-server" }
 ls-store = { path = "crates/ls-store" }
 
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }

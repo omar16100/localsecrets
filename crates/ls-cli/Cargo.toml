@@ -4,15 +4,18 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "localsecrets command line client."
 
 [[bin]]
 name = "lsec"
 path = "src/main.rs"
 
 [dependencies]
-ls-core.workspace = true
-ls-json.workspace = true
 ls-http.workspace = true
+ls-json.workspace = true
+
+[dev-dependencies]
+ls-server.workspace = true
 
 [lints]
 workspace = true

@@ -52,8 +52,14 @@
 - [x] localsecretsd binary with arguments and a 0700 data directory
 
 ## M6 — CLI
-- [ ] Config, project pin, token file
-- [ ] All commands including `run --`, import, export
+- [x] Config, project pin, token file at 0600
+- [x] init, unseal, seal, status
+- [x] user create, login, logout
+- [x] project/env create and list, `use` to pin a directory
+- [x] set (stdin by default, warns on argv), get, list, delete
+- [x] export dotenv and json, import .env
+- [x] `run -- command` with the child's exit code passed through
+- [x] token create and revoke, audit
 
 ## M7 — verification
 - [ ] End-to-end live run

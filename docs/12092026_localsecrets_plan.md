@@ -14,7 +14,7 @@ A minimal self-hosted secrets manager in Rust: a single-binary server plus a CLI
 | M3 ls-store append-only log | done (227 tests, clippy clean) |
 | M4 seal/unseal and sessions | done |
 | M5 projects, environments, secrets, machine tokens, audit | done (288 tests, clippy clean) |
-| M6 CLI | not started |
+| M6 CLI | done (309 tests, clippy clean) |
 | M7 verification and docs | not started |
 
 ## Milestones

@@ -63,7 +63,7 @@ fn any_threshold_subset_recovers_the_secret() {
     for combo in combinations(5, 3) {
         let subset: Vec<Share> = combo.iter().map(|&i| shares[i].clone()).collect();
         assert_eq!(
-            shamir::combine(&subset).unwrap(),
+            shamir::combine(&subset).unwrap().as_slice(),
             SECRET,
             "subset {combo:?} failed to recombine"
         );
@@ -73,7 +73,7 @@ fn any_threshold_subset_recovers_the_secret() {
 #[test]
 fn more_than_the_threshold_also_recovers_the_secret() {
     let shares = shamir::split(SECRET, 3, 5).unwrap();
-    assert_eq!(shamir::combine(&shares).unwrap(), SECRET);
+    assert_eq!(shamir::combine(&shares).unwrap().as_slice(), SECRET);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn fewer_than_the_threshold_does_not_recover_the_secret() {
     for combo in combinations(5, 2) {
         let subset: Vec<Share> = combo.iter().map(|&i| shares[i].clone()).collect();
         assert_ne!(
-            shamir::combine(&subset).unwrap(),
+            shamir::combine(&subset).unwrap().as_slice(),
             SECRET,
             "subset {combo:?} recovered the secret below the threshold"
         );
@@ -94,7 +94,10 @@ fn fewer_than_the_threshold_does_not_recover_the_secret() {
 fn a_threshold_of_one_makes_every_share_the_secret() {
     let shares = shamir::split(SECRET, 1, 3).unwrap();
     for share in &shares {
-        assert_eq!(shamir::combine(std::slice::from_ref(share)).unwrap(), SECRET);
+        assert_eq!(
+            shamir::combine(std::slice::from_ref(share)).unwrap().as_slice(),
+            SECRET
+        );
     }
 }
 
@@ -103,7 +106,11 @@ fn secrets_of_any_length_round_trip() {
     for len in [1usize, 2, 15, 16, 31, 32, 64, 257] {
         let secret: Vec<u8> = (0..len).map(|i| (i * 31 + 7) as u8).collect();
         let shares = shamir::split(&secret, 2, 3).unwrap();
-        assert_eq!(shamir::combine(&shares[..2]).unwrap(), secret, "length {len}");
+        assert_eq!(
+            shamir::combine(&shares[..2]).unwrap().as_slice(),
+            secret,
+            "length {len}"
+        );
     }
 }
 
@@ -111,7 +118,7 @@ fn secrets_of_any_length_round_trip() {
 fn an_all_zero_secret_round_trips() {
     let secret = vec![0u8; 32];
     let shares = shamir::split(&secret, 3, 5).unwrap();
-    assert_eq!(shamir::combine(&shares[..3]).unwrap(), secret);
+    assert_eq!(shamir::combine(&shares[..3]).unwrap().as_slice(), secret);
 }
 
 #[test]
@@ -255,4 +262,29 @@ fn debug_output_never_prints_share_data() {
     let rendered = format!("{:?}", shares[0]);
     let payload = ls_core::encoding::hex::encode(shares[0].data());
     assert!(!rendered.contains(&payload), "share leaked via Debug: {rendered}");
+}
+
+#[test]
+fn shares_at_the_highest_indexes_still_interpolate() {
+    let shares = shamir::split(SECRET, 3, 255).unwrap();
+    let top: Vec<Share> = shares[252..].to_vec();
+
+    assert_eq!(top.iter().map(Share::index).collect::<Vec<_>>(), vec![253, 254, 255]);
+    assert_eq!(shamir::combine(&top).unwrap().as_slice(), SECRET);
+}
+
+#[test]
+fn shares_recombine_after_a_round_trip_through_their_printed_form() {
+    let printed: Vec<String> = shamir::split(SECRET, 3, 5)
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+
+    let parsed: Vec<Share> = printed[1..4]
+        .iter()
+        .map(|p| Share::parse(p).unwrap())
+        .collect();
+
+    assert_eq!(shamir::combine(&parsed).unwrap().as_slice(), SECRET);
 }

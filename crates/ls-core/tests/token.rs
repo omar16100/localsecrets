@@ -78,3 +78,28 @@ fn debug_output_never_prints_the_token() {
         "Debug for an issued token leaked it: {rendered}"
     );
 }
+
+#[test]
+fn a_token_carries_thirty_two_bytes_of_entropy_in_a_fixed_format() {
+    let issued = token::generate().unwrap();
+    let body = issued
+        .secret()
+        .strip_prefix(token::TOKEN_PREFIX)
+        .expect("prefix");
+
+    assert_eq!(body.len(), 43, "32 bytes is 43 unpadded base64 characters");
+    assert_eq!(
+        ls_core::encoding::b64::decode(body).map(|b| b.len()),
+        Some(32)
+    );
+}
+
+#[test]
+fn the_secret_can_be_taken_out_for_a_single_delivery() {
+    let issued = token::generate().unwrap();
+    let hash = issued.hash().clone();
+
+    let secret = issued.into_secret();
+
+    assert!(hash.verify(&secret));
+}

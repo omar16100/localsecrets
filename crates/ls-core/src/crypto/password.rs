@@ -91,8 +91,18 @@ pub fn hash(password: &str) -> Result<String, PasswordError> {
     Ok(hashed.to_string())
 }
 
-/// Check a password against a stored PHC string. A malformed or unreadable hash
-/// fails closed rather than panicking.
+/// Highest argon2 cost this server will ever spend verifying one password.
+///
+/// The parameters used for verification come out of the stored hash, so a
+/// tampered store could otherwise ask for gigabytes of memory and many passes
+/// on every login attempt. These caps leave room to raise the working
+/// parameters later without invalidating hashes already written.
+const MAX_VERIFY_MEMORY_KIB: u32 = 256 * 1024;
+const MAX_VERIFY_PASSES: u32 = 10;
+const MAX_VERIFY_LANES: u32 = 4;
+
+/// Check a password against a stored PHC string. A malformed, unreadable or
+/// unreasonably expensive hash fails closed rather than panicking.
 pub fn verify(password: &str, stored: &str) -> bool {
     if password.len() > MAX_LEN {
         return false;
@@ -100,10 +110,30 @@ pub fn verify(password: &str, stored: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(stored) else {
         return false;
     };
+    if !cost_is_acceptable(&parsed) {
+        return false;
+    }
     match argon2() {
         Ok(hasher) => hasher
             .verify_password(password.as_bytes(), &parsed)
             .is_ok(),
         Err(_) => false,
     }
+}
+
+/// Read the work parameters out of a stored hash and decide whether we are
+/// willing to spend that much on one verification.
+fn cost_is_acceptable(parsed: &PasswordHash) -> bool {
+    let numeric = |name: &str| -> Option<u32> {
+        parsed
+            .params
+            .get(name)
+            .and_then(|value| value.decimal().ok())
+    };
+
+    let memory = numeric("m").unwrap_or(0);
+    let passes = numeric("t").unwrap_or(0);
+    let lanes = numeric("p").unwrap_or(0);
+
+    memory <= MAX_VERIFY_MEMORY_KIB && passes <= MAX_VERIFY_PASSES && lanes <= MAX_VERIFY_LANES
 }

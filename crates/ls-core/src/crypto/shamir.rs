@@ -82,7 +82,7 @@ mod gf_tests {
 use crate::encoding::{b64, hex};
 use crate::random::{self, EntropyError};
 use sha2::{Digest as _, Sha256};
-use zeroize::Zeroize as _;
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// Prefix identifying a printed share and its format version.
 pub const SHARE_PREFIX: &str = "lss1";
@@ -329,7 +329,7 @@ fn evaluate(constant: u8, coefficients: &[u8], x: u8) -> u8 {
 /// Supplying fewer than the threshold returns a wrong value rather than an
 /// error: that is inherent to the scheme, which is why the recovered key is
 /// always checked by an authenticated decryption afterwards.
-pub fn combine(shares: &[Share]) -> Result<Vec<u8>, ShamirError> {
+pub fn combine(shares: &[Share]) -> Result<Zeroizing<Vec<u8>>, ShamirError> {
     if shares.is_empty() {
         return Err(ShamirError::NotEnoughShares);
     }
@@ -364,5 +364,5 @@ pub fn combine(shares: &[Share]) -> Result<Vec<u8>, ShamirError> {
         secret.push(accumulated);
     }
 
-    Ok(secret)
+    Ok(Zeroizing::new(secret))
 }

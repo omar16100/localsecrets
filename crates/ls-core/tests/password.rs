@@ -65,3 +65,41 @@ fn very_long_passwords_are_rejected_rather_than_burning_cpu() {
         "expected TooLong, got {err:?}"
     );
 }
+
+#[test]
+fn verify_refuses_a_stored_hash_demanding_absurd_work() {
+    // A tampered store must not be able to make the server spend four gigabytes
+    // and ten passes on every login attempt.
+    let hostile = "$argon2id$v=19$m=4194304,t=10,p=4$c2FsdHNhbHRzYWx0c2FsdA$\
+aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
+
+    let started = std::time::Instant::now();
+    assert!(!password::verify("anything", hostile));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "parameters were not capped before hashing"
+    );
+}
+
+#[test]
+fn verify_accepts_a_hash_produced_at_the_configured_parameters() {
+    let stored = password::hash("correct horse battery staple").unwrap();
+    assert!(stored.contains("m=19456,t=2,p=1"), "unexpected params: {stored}");
+    assert!(password::verify("correct horse battery staple", &stored));
+}
+
+#[test]
+fn the_minimum_length_counts_characters_and_the_maximum_counts_bytes() {
+    // Twelve characters of Japanese is thirty-six bytes: long enough by the
+    // strength rule, nowhere near the resource limit.
+    let twelve_multibyte = "\u{65e5}".repeat(12);
+    assert_eq!(twelve_multibyte.chars().count(), 12);
+    assert_eq!(twelve_multibyte.len(), 36);
+    assert!(password::hash(&twelve_multibyte).is_ok());
+
+    let eleven = "\u{65e5}".repeat(11);
+    assert!(matches!(
+        password::hash(&eleven),
+        Err(password::PasswordError::TooShort { .. })
+    ));
+}

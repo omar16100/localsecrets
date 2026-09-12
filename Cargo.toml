@@ -35,8 +35,8 @@ ls-json = { path = "crates/ls-json" }
 ls-http = { path = "crates/ls-http" }
 ls-store = { path = "crates/ls-store" }
 
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
-argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
 sha2 = { version = "0.10", default-features = false }
 getrandom = "0.3"
 zeroize = { version = "1", default-features = false, features = ["alloc"] }

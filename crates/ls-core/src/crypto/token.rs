@@ -8,7 +8,7 @@ use crate::encoding::b64;
 use crate::random::{self, EntropyError};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
-use zeroize::Zeroize as _;
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// Prefix on every issued token, so secret scanners can recognise one on sight.
 pub const TOKEN_PREFIX: &str = "lsec_";
@@ -37,9 +37,10 @@ impl IssuedToken {
         &self.hash
     }
 
-    /// Consume the token, yielding the secret string.
-    pub fn into_secret(mut self) -> String {
-        std::mem::take(&mut self.secret)
+    /// Consume the token, yielding the secret string in a buffer that clears
+    /// itself once the caller is done delivering it.
+    pub fn into_secret(mut self) -> Zeroizing<String> {
+        Zeroizing::new(std::mem::take(&mut self.secret))
     }
 }
 
@@ -91,8 +92,13 @@ impl std::fmt::Debug for TokenHash {
 pub fn generate() -> Result<IssuedToken, EntropyError> {
     let mut bytes = [0u8; TOKEN_BYTES];
     random::fill(&mut bytes)?;
-    let secret = format!("{TOKEN_PREFIX}{}", b64::encode(&bytes));
+    let mut encoded = b64::encode(&bytes);
     bytes.zeroize();
+
+    let mut secret = String::with_capacity(TOKEN_PREFIX.len() + encoded.len());
+    secret.push_str(TOKEN_PREFIX);
+    secret.push_str(&encoded);
+    encoded.zeroize();
 
     let hash = hash(&secret);
     Ok(IssuedToken { secret, hash })

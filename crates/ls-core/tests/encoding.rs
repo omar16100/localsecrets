@@ -68,6 +68,49 @@ fn base64url_rejects_padding() {
 }
 
 #[test]
+fn base64url_rejects_non_canonical_final_groups() {
+    // "Zg" and "Zh" would both decode to b"f" if the unused low bits of the
+    // final sextet were ignored. Accepting both means a value has more than one
+    // spelling, so a checksum over the decoded bytes cannot detect an edit to
+    // the spelling.
+    assert_eq!(b64::decode("Zg").unwrap(), b"f");
+    assert!(b64::decode("Zh").is_none(), "non-canonical two-character group");
+    assert!(b64::decode("Zi").is_none());
+    assert!(b64::decode("Zv").is_none());
+
+    assert_eq!(b64::decode("Zm8").unwrap(), b"fo");
+    assert!(b64::decode("Zm9").is_none(), "non-canonical three-character group");
+    assert!(b64::decode("Zm-").is_none());
+    assert!(b64::decode("Zm_").is_none());
+}
+
+#[test]
+fn every_encoded_value_is_the_only_spelling_of_itself() {
+    for len in 1..=8usize {
+        let data: Vec<u8> = (0..len).map(|i| (i * 53 + 11) as u8).collect();
+        let canonical = b64::encode(&data);
+
+        // Any other string of the same length that decodes at all must decode
+        // to something else.
+        let mut chars: Vec<char> = canonical.chars().collect();
+        let last = chars.len() - 1;
+        for replacement in ['A', 'B', 'C', 'D', 'Q', 'g', 'w', '-', '_'] {
+            if replacement == chars[last] {
+                continue;
+            }
+            let original = chars[last];
+            chars[last] = replacement;
+            let candidate: String = chars.iter().collect();
+            chars[last] = original;
+
+            if let Some(decoded) = b64::decode(&candidate) {
+                assert_ne!(decoded, data, "{candidate} is a second spelling of {data:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn base64url_rejects_a_truncated_group() {
     // A single leftover character cannot encode any whole byte.
     assert!(b64::decode("Z").is_none());

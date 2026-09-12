@@ -39,6 +39,19 @@ pub mod b64 {
             for (i, &c) in chunk.iter().enumerate() {
                 bits |= (value_of(c)? as u32) << (18 - 6 * i);
             }
+
+            // A short final group carries bits that encode nothing. They must be
+            // zero, otherwise a value would have more than one spelling and a
+            // checksum over the decoded bytes could not detect an edited one.
+            let unused_bits = match chunk.len() {
+                2 => 4,
+                3 => 2,
+                _ => 0,
+            };
+            if unused_bits > 0 && (bits >> (24 - 6 * chunk.len())) & ((1 << unused_bits) - 1) != 0 {
+                return None;
+            }
+
             // A group of n characters carries n - 1 bytes.
             for i in 0..chunk.len() - 1 {
                 out.push(((bits >> (16 - 8 * i)) & 0xFF) as u8);

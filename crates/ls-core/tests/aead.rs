@@ -151,13 +151,69 @@ fn oversized_values_are_rejected_rather_than_stored() {
 }
 
 #[test]
-fn a_key_round_trips_through_storage_bytes() {
-    let key = DataKey::generate().unwrap();
+fn a_key_rebuilt_from_the_same_bytes_opens_the_same_ciphertext() {
+    let material = [7u8; 32];
+    let key = DataKey::from_bytes(&material).unwrap();
     let sealed = key.seal(b"value", &slot()).unwrap();
 
-    let reloaded = DataKey::from_bytes(key.expose_bytes()).unwrap();
+    let reloaded = DataKey::from_bytes(&material).unwrap();
 
     assert_eq!(reloaded.open(&sealed, &slot()).unwrap(), b"value");
+}
+
+#[test]
+fn a_key_wrapped_by_another_key_comes_back_usable() {
+    let root = DataKey::generate().unwrap();
+    let dek = DataKey::generate().unwrap();
+    let context = Aad::key_wrap("project-dek", "p1");
+    let sealed = dek.seal(b"value", &slot()).unwrap();
+
+    let wrapped = root.wrap(&dek, &context).unwrap();
+    let restored = root.unwrap_key(&wrapped, &context).unwrap();
+
+    assert_eq!(restored.open(&sealed, &slot()).unwrap(), b"value");
+}
+
+#[test]
+fn a_wrapped_key_cannot_be_transplanted_to_another_project() {
+    // Someone with write access to the store must not be able to move project
+    // A's data key onto project B and read A's secrets through B.
+    let root = DataKey::generate().unwrap();
+    let dek = DataKey::generate().unwrap();
+
+    let wrapped = root.wrap(&dek, &Aad::key_wrap("project-dek", "p1")).unwrap();
+
+    assert!(matches!(
+        root.unwrap_key(&wrapped, &Aad::key_wrap("project-dek", "p2")),
+        Err(AeadError::Decrypt)
+    ));
+}
+
+#[test]
+fn a_wrapped_key_does_not_open_under_a_different_root_key() {
+    let root = DataKey::generate().unwrap();
+    let other_root = DataKey::generate().unwrap();
+    let dek = DataKey::generate().unwrap();
+    let context = Aad::key_wrap("project-dek", "p1");
+
+    let wrapped = root.wrap(&dek, &context).unwrap();
+
+    assert!(matches!(
+        other_root.unwrap_key(&wrapped, &context),
+        Err(AeadError::Decrypt)
+    ));
+}
+
+#[test]
+fn something_that_is_not_a_key_does_not_unwrap_into_one() {
+    let root = DataKey::generate().unwrap();
+    let context = Aad::key_wrap("project-dek", "p1");
+    let not_a_key = root.seal(b"only five", &context).unwrap();
+
+    assert!(matches!(
+        root.unwrap_key(&not_a_key, &context),
+        Err(AeadError::Decrypt)
+    ));
 }
 
 #[test]
@@ -179,13 +235,26 @@ fn a_nonce_of_the_wrong_size_is_rejected_instead_of_panicking() {
 
 #[test]
 fn debug_output_never_prints_key_material() {
-    let key = DataKey::generate().unwrap();
+    let key = DataKey::from_bytes(&[0xab; 32]).unwrap();
     let rendered = format!("{key:?}");
-    let leaked = key
-        .expose_bytes()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
 
-    assert!(!rendered.contains(&leaked), "key leaked via Debug: {rendered}");
+    assert!(!rendered.contains("abab"), "key leaked via Debug: {rendered}");
+    assert_eq!(rendered, "DataKey([redacted; 32])");
+}
+
+#[test]
+fn associated_data_stays_unambiguous_for_long_fields() {
+    // Field lengths are written as 64-bit counts, so a long name cannot wrap
+    // around and collide with a different one.
+    let key = DataKey::generate().unwrap();
+    let long = "n".repeat(70_000);
+    let sealed = key.seal(b"v", &Aad::secret_slot("p", "e", &long)).unwrap();
+
+    assert!(
+        key.open(&sealed, &Aad::secret_slot("p", "e", &long)).is_ok()
+    );
+    assert!(matches!(
+        key.open(&sealed, &Aad::secret_slot("p", "e", &"n".repeat(69_999))),
+        Err(AeadError::Decrypt)
+    ));
 }

@@ -46,10 +46,12 @@ For a single operator, a 3-of-5 split usually ends up entirely in one password m
 | Choice | Reasoning |
 |---|---|
 | AES-256-GCM | Standard AEAD with hardware acceleration. Fresh 96-bit random nonce per operation. |
-| Random nonces | Safe below roughly 2^32 encryptions under one key. A project data key at human write rates is many orders of magnitude below that. Rotation is the answer if that ever changes. |
+| Random nonces | With 96-bit random nonces the chance of a repeat after q encryptions under one key is about q(q-1)/2^97: roughly 2^-33 at 2^32 writes. A project data key at human write rates stays many orders of magnitude below that. Rotation is the answer if that ever changes. |
 | Length-prefixed associated data | Plain concatenation is ambiguous: `("ab","c")` and `("a","bc")` would collide and defeat slot binding. |
 | argon2id, m=19 MiB, t=2, p=1 | The OWASP floor, stated explicitly rather than inherited from a library default that may change between versions. |
 | Opaque tokens hashed with SHA-256 | 32 bytes of entropy means no stretching is needed. Storing the hash makes a stolen file useless; comparison is constant time regardless. |
+| Capped argon2 parameters on verification | Work parameters come out of the stored hash, so a tampered store could otherwise demand gigabytes and many passes on every login. Anything above 256 MiB, 10 passes or 4 lanes is refused before any hashing happens. |
+| Canonical base64 only | `Zg` and `Zh` would otherwise both decode to the same byte. One value, one spelling, so a checksum over decoded bytes detects an edited share. |
 | Shamir over GF(2^8) | Byte-wise sharing splits an arbitrary 32-byte key exactly. Prime-field and elliptic-curve schemes cannot represent every 32-byte value without bias. |
 
 Shamir sharing carries no integrity of its own. A wrong recombination is caught because the recovered master key then fails to authenticate the wrapped root key, so a bad unseal reports failure rather than installing a wrong key.

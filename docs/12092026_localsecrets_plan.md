@@ -15,7 +15,10 @@ A minimal self-hosted secrets manager in Rust: a single-binary server plus a CLI
 | M4 seal/unseal and sessions | done |
 | M5 projects, environments, secrets, machine tokens, audit | done (288 tests, clippy clean) |
 | M6 CLI | done (309 tests, clippy clean) |
-| M7 verification and docs | done; both review rounds applied |
+| M7 verification and docs | done |
+| M8 published | done: MIT, CI on two platforms, dependency policy gated |
+| M9 second defect hunt applied | done |
+| M10 verification pass on the fixes | done |
 
 ## Milestones
 
@@ -67,17 +70,36 @@ Raised in the M1 design review, to be handled in the milestone named:
 clippy with warnings denied, the test suite, and a check that the lockfile
 still holds only audited cryptography. Green on Linux and macOS.
 
+## Review rounds
+
+Four, each of which found something the previous one did not.
+
+| Round | Reviewer | Found |
+|---|---|---|
+| Design, before any code | fable | The wrong Shamir primitive, a bootstrap with no way to create the first account, ambiguous associated data |
+| M1 crypto | codex | Non-canonical base64 giving every value a second spelling, uncapped argon2 parameters read from storage |
+| Finished v1 | codex | A machine token unconfined outside secret routes, a token lifetime that could break the replay, slowloris |
+| The fixes themselves | fable | The re-split not crash-safe, DNS rebinding walking around the content-type rule, an unbounded drain |
+
+The pattern worth remembering: the third round found a blocker in code the
+second round had approved, and the fourth found a blocker in the fix written
+for the third. A review of a fix is worth as much as the review that prompted
+it.
+
 ## Untested paths
 
 Stated rather than glossed over:
 
-- The store marks itself unusable after a failed append. Reaching that needs a
-  real write or fsync error, which the suite cannot induce, so the guard is
-  implemented and reasoned about but not exercised.
 - Long-running token expiry is tested by issuing already-expired tokens, not
   by waiting.
-- Multi-user concurrency is exercised only by the parallel test suite, not by
-  a deliberate contention test.
+- Multi-user concurrency is exercised only by the parallel test suite and by
+  the deliberate lock-poisoning tests, not by a sustained contention test.
+- The directory flush after a re-split is best-effort and its failure path is
+  not exercised: inducing an fsync error on a directory is not something the
+  suite can arrange.
+- Nothing tests behaviour across an actual power loss. The crash tests
+  simulate a torn write by editing the file, which is the shape of the damage
+  but not the timing.
 
 ## Out of scope for v1
 

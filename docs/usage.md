@@ -82,10 +82,15 @@ Revoke it with `lsec token revoke <id>`. Revocation takes effect immediately: th
 ```sh
 lsec seal                    # drops the root key; the server can read nothing
 lsec unseal                  # offer one share, repeat until the threshold is met
+lsec unseal --reset          # throw away a part-finished attempt and start over
 lsec status
 ```
 
 A restarted server comes back sealed. This is the point: the files on disk are inert until a quorum of share holders is present.
+
+Offer the share at the prompt rather than as an argument. Passing it as an argument works and warns, because it lands in your shell history and is visible to anyone who can list processes.
+
+Mixing shares from two different splits, or mistyping one, leaves a part-finished attempt. `lsec unseal --reset` clears it. An attempt that reaches the threshold and fails clears itself.
 
 ## Changing who holds the shares
 
@@ -106,6 +111,29 @@ It does not help if a share was *exposed* rather than lost: anyone with a copy o
 | Server address | `LS_SERVER`, default `127.0.0.1:8787` |
 | Token override | `LS_TOKEN`, or `--token` |
 | Store | `<data-dir>/store.log`, mode 0600, directory 0700 |
+| Log level | `LS_LOG`: `error`, `warn`, `info` (default) or `debug` |
+
+## When something refuses
+
+Every status the server sends:
+
+| Status | Means |
+|---|---|
+| 400 | The request or the body does not make sense, or a share will not parse. |
+| 401 | No token, or one that is expired, revoked or spent. |
+| 403 | A real token that may not do this, or may not reach that environment. |
+| 404 | No such project, environment or secret. |
+| 405 | That method on that path. |
+| 409 | It already exists, or the vault is already initialised. |
+| 412 | The vault has not been initialised. |
+| 413 | The value is larger than a secret may be. |
+| 415 | A state-changing request without `content-type: application/json`. |
+| 421 | Addressed to a name that is not this machine, or carrying a browser `Origin`. |
+| 429 | Too many login attempts, or too many init and unseal attempts. |
+| 500 | Something failed on this side. The reason is in the log. |
+| 503 | The vault is sealed. |
+
+415 and 421 exist to keep a web page out; see [security.md](security.md). If you are writing a client, send the content type on everything except `GET`, address the server as `127.0.0.1` or `localhost`, and send no `Origin`.
 
 ## Auditing
 
@@ -113,7 +141,16 @@ It does not help if a share was *exposed* rather than lost: anyone with a copy o
 lsec audit
 ```
 
-Every read, write and delete is recorded with who, what and the outcome, including refusals. Key names appear; values never do.
+Every read, write and delete is recorded with who, what and the outcome. Key names appear; values never do.
+
+| Outcome | Means |
+|---|---|
+| `ok` | It happened. |
+| `denied` | The caller was not allowed. |
+| `missing` | The key is not there. |
+| `unknown` | The project or environment is not there, so someone may be hunting for names. |
+
+The trail lives in the store, so reading it needs an unsealed server and a session token.
 
 ## Examples
 

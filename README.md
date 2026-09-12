@@ -20,7 +20,7 @@ lsec run -- npm start                # the child gets the secrets in its environ
 - **A seal barrier.** A master key is split into unseal shares with Shamir's scheme and never stored. A restarted server comes back sealed and can read nothing until a quorum of share holders is present.
 - **Machine tokens** confined to one environment, read-only, revocable, with an optional lifetime.
 - **Re-splittable shares.** `lsec rekey` rotates the root key and hands out a fresh set, rewriting the file so the old barrier stops existing. A lost share or a change of custodians is an ordinary operation, not a rebuild.
-- **An audit trail** of every read, write and delete, including refusals and misses. Key names appear; values never do.
+- **An audit trail** of every read, write and delete, including refusals, misses, and requests for names that do not exist. Key names appear; values never do.
 - **An append-only store.** One file. Every change is appended and flushed; a crash leaves a partial tail that the next start discards.
 
 ## Dependencies
@@ -49,6 +49,12 @@ target/release/localsecretsd --data-dir ~/.local/share/localsecrets
 
 The server binds loopback. Serving it to a network means putting a reverse proxy in front to terminate TLS.
 
+## Kept out by design
+
+- Requests that change state need `content-type: application/json`, which a form cannot send, so a page on another site cannot reach `init` or `unseal` without a preflight it will never get.
+- Every request must be addressed to this machine, and one carrying a browser `Origin` is refused: that is what DNS rebinding cannot forge.
+- Requests are bounded in size and in time, the accept queue is bounded, and the unauthenticated endpoints share a rate limit.
+
 ## Read before you trust it
 
 [docs/security.md](docs/security.md) sets out what this protects against and, at more length, what it does not: an attacker with code execution on an unsealed host, a compromised client, swap and core dumps, someone who can write to the store file. It also explains why a 3-of-5 split held by one person is a passphrase with extra steps.
@@ -66,11 +72,13 @@ This is a personal project with no security guarantees and no audit. Do not use 
 ## Tests
 
 ```sh
-cargo test --workspace     # no external services, a few seconds
-cargo clippy --workspace --all-targets
+cargo test --workspace     # 402 tests, no external services, a few seconds
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The suite covers the cryptography against published vectors (FIPS-197 for the field arithmetic, RFC 4648 for base64), the HTTP parser against the ambiguities that cause request smuggling, the store against crashes and tampering, and the whole flow end to end through the real binaries.
+
+Several tests were written to fail against the bug they describe before the fix landed, which is the only way to know a test is worth having: the consume arithmetic in the chunked head reader, the race in recovering a poisoned lock, and the non-canonical base64 that gave every value a second spelling.
 
 ## Licence
 

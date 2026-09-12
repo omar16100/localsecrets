@@ -69,4 +69,14 @@
 - [x] Restart and unseal with a different pair of shares, state intact
 - [x] Machine token refused on another environment, refusal recorded as denied
 - [x] docs/usage.md written and registered in the index
-- [ ] Apply the findings of the final review
+- [x] Apply the findings of the final review:
+  - [x] blocker: machine tokens were unconfined outside secret routes
+  - [x] machine tokens are read-only; root is bootstrap-only and spent on use
+  - [x] token lifetimes range checked, so an expiry cannot break the replay
+  - [x] whole-request deadline and a bounded accept queue (slowloris)
+  - [x] login rate limit normalises its key and caps the map
+  - [x] a failed append makes the log unusable until it is reopened
+  - [x] init does everything fallible before the first write
+  - [x] a repaired tail is reported to the operator
+  - [x] the root token is prompted for, never suggested on a command line
+  - [x] security.md corrected: token comparison, dependency count, tail rollback

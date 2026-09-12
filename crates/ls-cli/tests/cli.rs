@@ -177,6 +177,57 @@ fn init_prints_the_shares_and_says_they_are_shown_once() {
 }
 
 #[test]
+fn the_first_account_can_be_created_without_putting_the_token_on_the_command_line() {
+    let cli = Cli::start("root-prompt");
+    let init = cli.stdout(&["init", "--threshold", "1", "--shares", "1"]);
+    let root = init
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("root token: "))
+        .expect("init should print a root token")
+        .to_owned();
+
+    // No --token: the root token is asked for, then the password.
+    let created = cli.run_with_stdin(
+        &["user", "create", "dev@example.com"],
+        &format!("{root}\ncorrect horse battery staple\n"),
+    );
+
+    assert!(
+        created.status.success(),
+        "user create failed: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+
+    let logged_in = cli.run_with_stdin(
+        &["login", "dev@example.com"],
+        "correct horse battery staple\n",
+    );
+    assert!(logged_in.status.success());
+}
+
+#[test]
+fn creating_an_account_without_any_token_fails_rather_than_hanging() {
+    let cli = Cli::start("root-missing");
+    cli.stdout(&["init", "--threshold", "1", "--shares", "1"]);
+
+    let output = cli.run_with_stdin(&["user", "create", "dev@example.com"], "\n");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn the_init_output_does_not_tell_the_operator_to_paste_the_token_into_a_command() {
+    let cli = Cli::start("init-advice");
+
+    let output = cli.stdout(&["init"]);
+
+    assert!(
+        !output.contains("--token"),
+        "init should not suggest putting the root token in argv:\n{output}"
+    );
+}
+
+#[test]
 fn a_secret_can_be_written_and_read_back() {
     let cli = Cli::start("set-get");
     cli.ready();

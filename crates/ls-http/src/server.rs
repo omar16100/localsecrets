@@ -10,7 +10,7 @@ use std::io::{BufReader, Read as _, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -22,6 +22,11 @@ const DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Most bytes to clear off the socket before closing anyway.
 const MAX_DRAIN: usize = 64 * 1024;
+
+/// Connections allowed to wait for a worker. Beyond this the listener refuses,
+/// which is a clearer answer than an unbounded queue that eventually exhausts
+/// memory.
+const QUEUE_DEPTH: usize = 128;
 
 /// A bound listener, not yet serving.
 #[derive(Debug)]
@@ -54,7 +59,8 @@ impl Server {
         let handler = Arc::new(handler);
         let limits = self.limits;
 
-        let (sender, receiver): (Sender<TcpStream>, Receiver<TcpStream>) = channel();
+        let (sender, receiver): (SyncSender<TcpStream>, Receiver<TcpStream>) =
+            sync_channel(QUEUE_DEPTH);
         let receiver = Arc::new(Mutex::new(receiver));
 
         let mut threads = Vec::with_capacity(workers.max(1) + 1);
@@ -84,8 +90,15 @@ impl Server {
                 }
                 match incoming {
                     Ok(stream) => {
-                        if sender.send(stream).is_err() {
-                            break;
+                        // Apply the timeouts here rather than in the worker, so
+                        // a connection cannot sit in the queue without one.
+                        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                        let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
+
+                        // A bounded queue: when every worker is busy and the
+                        // backlog is full, refuse rather than accumulate.
+                        if sender.try_send(stream).is_err() {
+                            continue;
                         }
                     }
                     Err(_) => continue,

@@ -39,6 +39,12 @@ pub struct Log {
     path: PathBuf,
     file: File,
     count: usize,
+    /// Set when an append failed partway. The record count can no longer be
+    /// trusted, and since every record is sealed against its position, writing
+    /// another one could reuse a sequence number and make the log unreadable.
+    broken: bool,
+    /// Whether opening this log had to discard a partial record.
+    repaired: bool,
 }
 
 impl Log {
@@ -61,15 +67,23 @@ impl Log {
                 path: path.to_path_buf(),
                 file,
                 count: 0,
+                broken: false,
+                repaired: false,
             });
         }
 
         check_header(&mut file)?;
         let (count, good_len) = scan(&mut file)?;
 
-        if file.metadata()?.len() != good_len {
+        let repaired = file.metadata()?.len() != good_len;
+        if repaired {
             // A crash during an append. Everything before the partial record is
             // intact, so keep that and drop the tail.
+            //
+            // This cannot tell a crash from someone editing the last record's
+            // length: both look like a tail that does not parse. An attacker
+            // with write access to this file can therefore roll the last
+            // record back, which is stated plainly in docs/security.md.
             file.set_len(good_len)?;
             file.sync_data()?;
         }
@@ -79,6 +93,8 @@ impl Log {
             path: path.to_path_buf(),
             file,
             count,
+            broken: false,
+            repaired,
         })
     }
 
@@ -90,6 +106,14 @@ impl Log {
     /// Whether the log holds no records.
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    /// Whether opening this log discarded a partial record at the end.
+    ///
+    /// Worth telling the operator about: it means either a crash during a
+    /// write, or someone editing the file.
+    pub fn repaired(&self) -> bool {
+        self.repaired
     }
 
     /// Append a record readable without a key. Only the barrier uses this.
@@ -188,12 +212,18 @@ impl Log {
         let reopened = Log::open(&self.path)?;
         self.file = reopened.file;
         self.count = reopened.count;
+        self.broken = false;
         Ok(())
     }
 
     fn write_record(&mut self, kind: u8, payload: &[u8]) -> Result<(), StoreError> {
+        if self.broken {
+            return Err(StoreError::Broken);
+        }
+
         let length = payload.len() + 1;
         if length > MAX_RECORD_LEN {
+            // Refused before anything was written, so the log is still fine.
             return Err(StoreError::RecordTooLarge {
                 len: payload.len(),
                 limit: MAX_RECORD_LEN,
@@ -206,8 +236,14 @@ impl Log {
         framed.push(kind);
         framed.extend_from_slice(payload);
 
-        self.file.write_all(&framed)?;
-        self.file.sync_data()?;
+        // Past this point a failure may have left part of a record on disk, so
+        // the count is no longer reliable and nothing more may be appended
+        // until the log is reopened and rescanned.
+        if let Err(error) = self.file.write_all(&framed).and_then(|()| self.file.sync_data()) {
+            self.broken = true;
+            return Err(StoreError::Io(error));
+        }
+
         self.count += 1;
         Ok(())
     }

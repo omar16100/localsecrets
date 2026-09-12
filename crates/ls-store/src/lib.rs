@@ -53,6 +53,9 @@ pub enum StoreError {
     Crypto,
     /// A record did not hold an event this build understands.
     MalformedEvent(&'static str),
+    /// An earlier append failed partway, so the log cannot be written to again
+    /// until it is reopened and rescanned.
+    Broken,
     /// The underlying file failed.
     Io(std::io::Error),
 }
@@ -72,6 +75,9 @@ impl std::fmt::Display for StoreError {
             }
             Self::Crypto => f.write_str("could not encrypt a record"),
             Self::MalformedEvent(what) => write!(f, "record is not a usable event: {what}"),
+            Self::Broken => {
+                f.write_str("an earlier write failed; the store must be reopened")
+            }
             Self::Io(e) => write!(f, "store file failed: {e}"),
         }
     }

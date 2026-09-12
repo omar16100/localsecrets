@@ -1,6 +1,6 @@
 //! One function per command.
 
-use crate::api::field;
+use crate::api::{Api, field};
 use crate::{Common, config, input, option_value};
 use ls_json::Value;
 use std::process::ExitCode;
@@ -96,8 +96,9 @@ fn init(common: &Common, args: &[String]) -> Result<ExitCode, String> {
     println!();
     println!("root token: {}", field(&answer, "root_token")?);
     println!();
-    println!("Use the root token once, to create the first user:");
-    println!("  lsec user create you@example.com --token <root token>");
+    println!("Use the root token once, to create the first account. It is asked");
+    println!("for at a prompt, so it does not land in your shell history:");
+    println!("  lsec user create you@example.com");
 
     Ok(ExitCode::SUCCESS)
 }
@@ -173,9 +174,22 @@ fn create_user(common: &Common, args: &[String]) -> Result<ExitCode, String> {
         .first()
         .cloned()
         .ok_or("usage: lsec user create EMAIL")?;
-    let password = input::secret_line("password: ")?;
 
-    let api = common.connect_authenticated()?;
+    // Before there is an account there is no session, only the root token from
+    // init. Asking for it here keeps it out of the shell history and out of
+    // the process list.
+    let api = match common.token() {
+        Some(token) => Api::connect(&config::server_address(), Some(token))?,
+        None => {
+            let root = input::secret_line("root token: ")?;
+            if root.trim().is_empty() {
+                return Err("a token is needed to create an account".to_owned());
+            }
+            Api::connect(&config::server_address(), Some(root.trim().to_owned()))?
+        }
+    };
+
+    let password = input::secret_line("password: ")?;
     api.call(
         "POST",
         "/v1/users",

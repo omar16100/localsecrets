@@ -17,7 +17,8 @@ pub use request::Request;
 pub use response::Response;
 pub use server::{Server, ServerHandle};
 
-/// Bounds applied to an incoming request, so one caller cannot exhaust memory.
+/// Bounds applied to an incoming request, so one caller cannot exhaust memory
+/// or hold a worker indefinitely.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Largest request line plus headers, in bytes.
@@ -26,6 +27,12 @@ pub struct Limits {
     pub max_headers: usize,
     /// Largest body accepted, in bytes.
     pub max_body: usize,
+    /// How long a whole request may take to arrive.
+    ///
+    /// A per-read timeout is not enough: a client sending one byte just inside
+    /// it holds a worker for as long as it likes. This bounds the request as a
+    /// whole, so a handful of slow clients cannot occupy the pool.
+    pub head_deadline: std::time::Duration,
 }
 
 impl Default for Limits {
@@ -34,6 +41,7 @@ impl Default for Limits {
             max_head: 8 * 1024,
             max_headers: 64,
             max_body: 1024 * 1024,
+            head_deadline: std::time::Duration::from_secs(10),
         }
     }
 }
@@ -43,6 +51,8 @@ impl Default for Limits {
 pub enum HttpError {
     /// The connection ended before a complete request arrived.
     Incomplete,
+    /// The request did not arrive within [`Limits::head_deadline`].
+    TimedOut,
     /// The request line or a header was not well formed.
     Malformed(&'static str),
     /// The HTTP version is not one this server speaks.
@@ -73,6 +83,7 @@ impl std::fmt::Display for HttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Incomplete => f.write_str("request ended early"),
+            Self::TimedOut => f.write_str("request took too long to arrive"),
             Self::Malformed(what) => write!(f, "malformed request: {what}"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported HTTP version {v}"),
             Self::AmbiguousLength => f.write_str("more than one Content-Length"),
@@ -104,6 +115,7 @@ impl HttpError {
             Self::HeadTooLarge | Self::TooManyHeaders => 431,
             Self::UnsupportedVersion(_) => 505,
             Self::UnsupportedTransferEncoding => 501,
+            Self::TimedOut => 408,
             Self::Io(_) | Self::Incomplete => 400,
             _ => 400,
         }

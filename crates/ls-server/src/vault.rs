@@ -191,6 +191,16 @@ impl Vault {
     /// comes back sealed unless it has never been initialised.
     pub fn open(path: &Path) -> Result<Self, VaultError> {
         let mut log = Log::open(path)?;
+
+        if log.repaired() {
+            // Either a crash during a write, or someone editing the file. The
+            // operator should know either way.
+            ls_log::warn!(
+                "the store had an incomplete record at the end, which was discarded",
+                store = path.display()
+            );
+        }
+
         let barrier = log
             .read_plain()?
             .first()
@@ -240,6 +250,12 @@ impl Vault {
             .wrap(&root_key, &Barrier::context())
             .map_err(|_| VaultError::Crypto)?;
 
+        // Everything that can fail happens before the first write. Otherwise a
+        // failure here leaves a vault that is initialised but whose shares were
+        // never handed back, and init refuses to run again.
+        let issued = token::generate().map_err(|_| VaultError::Crypto)?;
+        let token_id = new_id();
+
         let barrier = Barrier {
             threshold,
             shares,
@@ -251,7 +267,18 @@ impl Vault {
         self.barrier = Some(barrier);
         self.root_key = Some(root_key);
 
-        let root_token = self.issue_token(TokenKind::Root, None, None, None, Some("root"), None)?;
+        self.commit(Event::TokenIssued {
+            id: token_id,
+            token_hash: issued.hash().as_bytes().to_vec(),
+            kind: TokenKind::Root,
+            user_id: None,
+            project_id: None,
+            environment_id: None,
+            label: Some("root".to_owned()),
+            expires_at: None,
+            created_at: Timestamp::now(),
+        })?;
+        let root_token = issued.into_secret();
 
         Ok(InitOutcome {
             shares: split.iter().map(ToString::to_string).collect(),

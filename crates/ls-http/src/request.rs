@@ -2,6 +2,7 @@
 
 use crate::{HttpError, Limits};
 use std::io::{BufRead, Read};
+use std::time::Instant;
 
 /// A parsed request.
 pub struct Request {
@@ -20,7 +21,8 @@ pub struct Request {
 impl Request {
     /// Read one request from `reader`, refusing anything outside `limits`.
     pub fn read<R: BufRead>(reader: &mut R, limits: &Limits) -> Result<Self, HttpError> {
-        let head = read_head(reader, limits)?;
+        let started = Instant::now();
+        let head = read_head(reader, limits, started)?;
         let mut lines = head.split(|&b| b == b'\n');
 
         let request_line = lines.next().ok_or(HttpError::Incomplete)?;
@@ -64,11 +66,7 @@ impl Request {
                         limit: limits.max_body,
                     });
                 }
-                let mut body = vec![0u8; declared];
-                reader
-                    .read_exact(&mut body)
-                    .map_err(|_| HttpError::IncompleteBody)?;
-                body
+                read_body(reader, declared, limits, started)?
             }
         };
 
@@ -125,11 +123,18 @@ impl std::fmt::Debug for Request {
 ///
 /// The reader is capped at `max_head` bytes, so an endless header line cannot
 /// grow the buffer without bound.
-fn read_head<R: BufRead>(reader: &mut R, limits: &Limits) -> Result<Vec<u8>, HttpError> {
+fn read_head<R: BufRead>(
+    reader: &mut R,
+    limits: &Limits,
+    started: Instant,
+) -> Result<Vec<u8>, HttpError> {
     let mut limited = reader.take(limits.max_head as u64);
     let mut head = Vec::with_capacity(512);
 
     loop {
+        if started.elapsed() > limits.head_deadline {
+            return Err(HttpError::TimedOut);
+        }
         let before = head.len();
         let read = limited.read_until(b'\n', &mut head)?;
         if read == 0 {
@@ -146,6 +151,32 @@ fn read_head<R: BufRead>(reader: &mut R, limits: &Limits) -> Result<Vec<u8>, Htt
             return Ok(head);
         }
     }
+}
+
+/// Read exactly `declared` bytes, giving up if the whole request runs past its
+/// deadline. Reading in chunks is what makes that check possible: `read_exact`
+/// would block until the per-read timeout on every dribbled byte.
+fn read_body<R: BufRead>(
+    reader: &mut R,
+    declared: usize,
+    limits: &Limits,
+    started: Instant,
+) -> Result<Vec<u8>, HttpError> {
+    let mut body = vec![0u8; declared];
+    let mut filled = 0usize;
+
+    while filled < declared {
+        if started.elapsed() > limits.head_deadline {
+            return Err(HttpError::TimedOut);
+        }
+        match reader.read(&mut body[filled..]) {
+            Ok(0) => return Err(HttpError::IncompleteBody),
+            Ok(read) => filled += read,
+            Err(_) => return Err(HttpError::IncompleteBody),
+        }
+    }
+
+    Ok(body)
 }
 
 /// Require CRLF line endings. A bare newline is two different requests to two

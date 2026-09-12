@@ -106,6 +106,7 @@ fn reason(status: u16) -> &'static str {
         409 => "Conflict",
         413 => "Content Too Large",
         415 => "Unsupported Media Type",
+        421 => "Misdirected Request",
         422 => "Unprocessable Content",
         429 => "Too Many Requests",
         431 => "Request Header Fields Too Large",

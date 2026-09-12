@@ -17,6 +17,11 @@ fn writes_a_status_line_with_a_reason_phrase() {
     assert!(rendered(&Response::text(403, "")).starts_with("HTTP/1.1 403 Forbidden\r\n"));
     assert!(rendered(&Response::text(404, "")).starts_with("HTTP/1.1 404 Not Found\r\n"));
     assert!(rendered(&Response::text(503, "")).starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+    assert!(
+        rendered(&Response::text(415, "")).starts_with("HTTP/1.1 415 Unsupported Media Type\r\n")
+    );
+    assert!(rendered(&Response::text(421, "")).starts_with("HTTP/1.1 421 Misdirected Request\r\n"));
+    assert!(rendered(&Response::text(429, "")).starts_with("HTTP/1.1 429 Too Many Requests\r\n"));
 }
 
 #[test]

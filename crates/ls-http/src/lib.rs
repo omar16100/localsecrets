@@ -61,6 +61,9 @@ pub enum HttpError {
     UnsupportedVersion(String),
     /// More than one `Content-Length`, which is how request smuggling starts.
     AmbiguousLength,
+    /// More than one `Host`, so who the request was addressed to is a matter
+    /// of which header a reader happens to pick.
+    AmbiguousHost,
     /// A `Transfer-Encoding` header. Chunked bodies are not supported, and
     /// accepting the header while ignoring it would be worse than refusing.
     UnsupportedTransferEncoding,
@@ -89,6 +92,7 @@ impl std::fmt::Display for HttpError {
             Self::Malformed(what) => write!(f, "malformed request: {what}"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported HTTP version {v}"),
             Self::AmbiguousLength => f.write_str("more than one Content-Length"),
+            Self::AmbiguousHost => f.write_str("more than one Host"),
             Self::UnsupportedTransferEncoding => f.write_str("Transfer-Encoding is not supported"),
             Self::IncompleteBody => f.write_str("body shorter than its declared length"),
             Self::BodyTooLarge { declared, limit } => {

@@ -30,6 +30,7 @@ impl Request {
 
         let mut headers: Vec<(String, String)> = Vec::new();
         let mut content_length: Option<usize> = None;
+        let mut seen_host = false;
 
         for raw in lines {
             let line = strip_cr(raw)?;
@@ -42,6 +43,12 @@ impl Request {
 
             let (name, value) = parse_header(line)?;
 
+            if name == "host" {
+                if seen_host {
+                    return Err(HttpError::AmbiguousHost);
+                }
+                seen_host = true;
+            }
             if name == "transfer-encoding" {
                 return Err(HttpError::UnsupportedTransferEncoding);
             }

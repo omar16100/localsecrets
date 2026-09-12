@@ -361,6 +361,44 @@ fn compaction_keeps_the_records_it_is_given_and_drops_the_rest() {
 }
 
 #[test]
+fn writes_after_a_compaction_land_in_the_file_that_is_live() {
+    // Compaction renames a fresh file over the old one. If it then goes back
+    // to the path for a handle instead of keeping the one it already has, any
+    // failure there leaves the log writing to the old, now unlinked file:
+    // every later record is written into nothing and lost without a word.
+    let dir = TempDir::new("compact-handle");
+    let mut log = Log::open(&dir.file()).unwrap();
+    log.append(&key(), b"before").unwrap();
+
+    log.compact(&key(), &[], &[b"kept".to_vec()]).unwrap();
+    log.append(&key(), b"after").unwrap();
+    drop(log);
+
+    let mut reopened = Log::open(&dir.file()).unwrap();
+    assert_eq!(
+        reopened.read_all(&key()).unwrap(),
+        vec![b"kept".to_vec(), b"after".to_vec()],
+        "a record written after compaction did not reach the live file"
+    );
+}
+
+#[test]
+fn a_compaction_interrupted_earlier_does_not_block_the_next_one() {
+    // A crash partway through leaves a temporary file behind. If it holds
+    // fewer bytes than a header, opening it fails, and compaction stays broken
+    // until someone deletes the file by hand.
+    let dir = TempDir::new("compact-stale");
+    let mut log = Log::open(&dir.file()).unwrap();
+    log.append(&key(), b"before").unwrap();
+
+    std::fs::write(dir.file().with_extension("compacting"), b"xx").unwrap();
+
+    log.compact(&key(), &[], &[b"kept".to_vec()])
+        .expect("a leftover temporary file should not stop a compaction");
+    assert_eq!(log.read_all(&key()).unwrap(), vec![b"kept".to_vec()]);
+}
+
+#[test]
 fn a_compacted_log_survives_reopening() {
     let dir = TempDir::new("compact-reopen");
     let mut log = Log::open(&dir.file()).unwrap();

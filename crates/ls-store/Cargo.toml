@@ -9,6 +9,8 @@ description = "Append-only encrypted log storage for localsecrets."
 [dependencies]
 ls-core.workspace = true
 ls-json.workspace = true
+ls-log.workspace = true
+subtle.workspace = true
 
 [lints]
 workspace = true

@@ -185,6 +185,12 @@ impl Log {
     ///
     /// The new file is built beside the old one and renamed over it, so an
     /// interrupted compaction leaves the original untouched.
+    ///
+    /// Nothing after the rename is allowed to fail. The handle already open on
+    /// the new file is kept rather than reopening the path: a failure there
+    /// would leave the caller believing the rewrite did not happen while the
+    /// new file is already live, and every later write going to the old,
+    /// unlinked file, vanishing without a word.
     pub fn compact(
         &mut self,
         key: &DataKey,
@@ -192,27 +198,47 @@ impl Log {
         sealed: &[Vec<u8>],
     ) -> Result<(), StoreError> {
         let temporary = self.path.with_extension("compacting");
-        {
-            let mut fresh = Log::open(&temporary)?;
-            fresh.file.set_len(HEADER_LEN as u64)?;
-            fresh.file.seek(SeekFrom::End(0))?;
-            fresh.count = 0;
 
-            for record in plain {
-                fresh.append_plain(record)?;
-            }
-            for record in sealed {
-                fresh.append(key, record)?;
-            }
-            fresh.file.sync_all()?;
+        // A previous attempt may have died partway and left something here. A
+        // few stray bytes would otherwise fail to open as a log and block
+        // every compaction from now on.
+        match std::fs::remove_file(&temporary) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::Io(error)),
         }
+
+        let mut fresh = Log::open(&temporary)?;
+        for record in plain {
+            fresh.append_plain(record)?;
+        }
+        for record in sealed {
+            fresh.append(key, record)?;
+        }
+        fresh.file.sync_all()?;
 
         std::fs::rename(&temporary, &self.path)?;
 
-        let reopened = Log::open(&self.path)?;
-        self.file = reopened.file;
-        self.count = reopened.count;
+        // From here on, everything is infallible.
+        self.file = fresh.file;
+        self.count = fresh.count;
         self.broken = false;
+        self.repaired = false;
+
+        // A rename is only durable once the directory holding it has been
+        // flushed. Without this, a power loss just after a re-split can bring
+        // the old file back, and the operator has already destroyed the only
+        // shares that open it. A failure here does not undo the rewrite, which
+        // has happened, so it is reported rather than returned.
+        if let Some(directory) = self.path.parent()
+            && let Err(error) = File::open(directory).and_then(|handle| handle.sync_all())
+        {
+            ls_log::warn!(
+                "could not flush the directory after rewriting the store; the rewrite is live but may not survive a power loss",
+                reason = error
+            );
+        }
+
         Ok(())
     }
 

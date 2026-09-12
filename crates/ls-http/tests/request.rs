@@ -109,6 +109,19 @@ fn rejects_two_content_length_headers() {
 }
 
 #[test]
+fn rejects_two_host_headers() {
+    // Which one counts decides who the request was addressed to, and anything
+    // in front of this server may well pick the other one.
+    let result = read("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nHost: evil.example.com\r\n\r\n");
+    assert!(matches!(result, Err(HttpError::AmbiguousHost)));
+}
+
+#[test]
+fn accepts_a_single_host_header() {
+    assert!(read("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").is_ok());
+}
+
+#[test]
 fn rejects_transfer_encoding() {
     // Chunked bodies are not supported, and accepting the header while
     // ignoring it is how smuggling happens.

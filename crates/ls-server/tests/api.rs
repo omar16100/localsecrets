@@ -1087,3 +1087,73 @@ fn the_unseal_ceremony_cannot_be_fed_rubbish_without_limit() {
 
     assert!(refused, "the ceremony can be poisoned without limit");
 }
+
+#[test]
+fn a_request_addressed_to_another_name_is_refused() {
+    // A page on evil.com can point that name at 127.0.0.1. The browser then
+    // treats http://evil.com:8787 as the same origin, so its script may set
+    // any content type it likes and read the answers. The content type rule
+    // does nothing about that; checking who the request was addressed to does.
+    let api = Harness::start("rebinding");
+
+    assert_eq!(
+        api.raw(
+            "GET",
+            "/v1/sys/health",
+            &[("host", "evil.example.com:8787")],
+            ""
+        ),
+        421
+    );
+    assert_eq!(
+        api.raw(
+            "POST",
+            "/v1/sys/init",
+            &[
+                ("host", "evil.example.com:8787"),
+                ("content-type", "application/json")
+            ],
+            r#"{"threshold":1,"shares":1}"#
+        ),
+        421
+    );
+}
+
+#[test]
+fn the_usual_ways_of_naming_this_machine_are_accepted() {
+    let api = Harness::start("host-names");
+
+    for host in [
+        "127.0.0.1:8787",
+        "127.0.0.1",
+        "localhost:8787",
+        "localhost",
+        "[::1]:8787",
+        "LOCALHOST:8787",
+    ] {
+        assert_eq!(
+            api.raw("GET", "/v1/sys/health", &[("host", host)], ""),
+            200,
+            "host {host} was refused"
+        );
+    }
+}
+
+#[test]
+fn a_request_claiming_to_come_from_a_website_is_refused() {
+    let api = Harness::start("origin");
+
+    assert_eq!(
+        api.raw(
+            "POST",
+            "/v1/sys/init",
+            &[
+                ("host", "127.0.0.1:8787"),
+                ("origin", "https://evil.example.com"),
+                ("content-type", "application/json")
+            ],
+            r#"{"threshold":1,"shares":1}"#
+        ),
+        421
+    );
+}

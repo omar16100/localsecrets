@@ -1490,3 +1490,50 @@ fn re_splitting_refuses_nonsensical_parameters() {
     );
     assert!(!fixture.vault.is_sealed());
 }
+
+#[test]
+fn hunting_for_names_that_do_not_exist_leaves_a_trace() {
+    // The request fails before it reaches the point where operations are
+    // recorded, so without this an operator reading the trail sees nothing at
+    // all while someone walks the name space.
+    let mut fixture = ready("audit-unknown");
+    fixture
+        .vault
+        .create_project(&fixture.caller, "demo", "Demo")
+        .unwrap();
+
+    let _ = fixture
+        .vault
+        .get_secret(&fixture.caller, "nosuchproject", "dev", "K");
+    let _ = fixture
+        .vault
+        .get_secret(&fixture.caller, "demo", "nosuchenv", "K");
+
+    let trail = fixture.vault.audit_trail(&fixture.caller).unwrap();
+    let unknown: Vec<&str> = trail
+        .iter()
+        .filter(|entry| entry.outcome == "unknown")
+        .map(|entry| entry.target.as_str())
+        .collect();
+
+    assert_eq!(unknown.len(), 2, "got {unknown:?}");
+    assert!(unknown.contains(&"nosuchproject/dev/K"), "got {unknown:?}");
+    assert!(unknown.contains(&"demo/nosuchenv/K"), "got {unknown:?}");
+}
+
+#[test]
+fn a_confined_token_hunting_for_names_is_recorded_too() {
+    let (mut fixture, machine) = with_machine("audit-unknown-machine");
+
+    let _ = fixture
+        .vault
+        .get_secret(&machine, "nosuchproject", "dev", "K");
+
+    let trail = fixture.vault.audit_trail(&fixture.caller).unwrap();
+    assert!(
+        trail
+            .iter()
+            .any(|entry| entry.outcome == "unknown" && entry.actor.starts_with("machine:")),
+        "a confined token's probing should be visible"
+    );
+}

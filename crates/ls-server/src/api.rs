@@ -63,6 +63,9 @@ impl Api {
             .collect();
         let method = request.method.as_str();
 
+        if let Some(refusal) = refuse_elsewhere(request) {
+            return refusal;
+        }
         if let Some(refusal) = refuse_cross_origin(request) {
             return refusal;
         }
@@ -502,9 +505,14 @@ impl Api {
         }
 
         self.authed(request, |caller, vault| {
-            // Everything is checked before anything is written, so a refusal
-            // does not leave half the batch in place with no way to tell which
-            // half.
+            // Everything is checked before anything is written, so a batch
+            // refused for a bad key or an oversized value is refused whole.
+            //
+            // That is a validation guarantee, not a transaction: there is no
+            // way to make several appends one atomic act, so a write that
+            // fails partway leaves the keys before it in place. Such a failure
+            // also marks the log unusable, so the server stops accepting
+            // writes rather than carrying on in an unclear state.
             for (key, value) in &entries {
                 vault.check_secret(&caller, project, environment, key, value.as_bytes())?;
             }
@@ -622,6 +630,50 @@ impl Api {
             method_not_allowed()
         }
     }
+}
+
+/// Refuse anything addressed to a name that is not this machine.
+///
+/// Requiring a JSON content type stops the ordinary cross-site request, and
+/// does nothing about DNS rebinding: a page on `evil.com` points that name at
+/// `127.0.0.1`, after which the browser considers `http://evil.com:8787` the
+/// same origin and its script may set any header it likes and read every
+/// answer. What distinguishes that case is the name the request was addressed
+/// to, which a browser always sends and a rebound page cannot change.
+///
+/// An `Origin` header naming a website is refused for the same reason: nothing
+/// that legitimately talks to this server has one.
+fn refuse_elsewhere(request: &Request) -> Option<Response> {
+    let addressed_here = request.header("host").map(is_this_machine).unwrap_or(false);
+
+    let from_a_page = request
+        .header("origin")
+        .is_some_and(|origin| !origin.is_empty() && origin != "null");
+
+    if addressed_here && !from_a_page {
+        None
+    } else {
+        Some(error_response(
+            421,
+            "this server answers only to its own address",
+        ))
+    }
+}
+
+/// Whether a `Host` value names this machine.
+fn is_this_machine(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+
+    // Strip the port, taking care with the bracketed form of an IPv6 address.
+    let name = match host.strip_prefix('[') {
+        Some(rest) => match rest.split_once(']') {
+            Some((inside, _)) => inside.to_owned(),
+            None => return false,
+        },
+        None => host.split(':').next().unwrap_or_default().to_owned(),
+    };
+
+    matches!(name.as_str(), "localhost" | "127.0.0.1" | "::1") || name.starts_with("127.")
 }
 
 /// Refuse anything a page on another site could send us without asking first.

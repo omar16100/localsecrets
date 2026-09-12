@@ -95,9 +95,19 @@ impl Client {
         head.push_str(method);
         head.push(' ');
         head.push_str(path);
-        head.push_str(" HTTP/1.1\r\nhost: ");
-        head.push_str(&self.address.to_string());
-        head.push_str("\r\nconnection: close\r\n");
+        head.push_str(" HTTP/1.1\r\n");
+
+        // Only one Host, and the caller's takes precedence: a server is
+        // entitled to refuse a request carrying two.
+        if !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("host"))
+        {
+            head.push_str("host: ");
+            head.push_str(&self.address.to_string());
+            head.push_str("\r\n");
+        }
+        head.push_str("connection: close\r\n");
         for (name, value) in headers {
             if name.contains(['\r', '\n']) || value.contains(['\r', '\n']) {
                 return Err(HttpError::Malformed("header contains a line break"));

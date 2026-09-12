@@ -17,8 +17,15 @@ use std::time::Duration;
 /// How long a response may take to go out before the connection is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long to spend clearing a refused request off the socket before closing.
+/// How long a single read may block while clearing a refused request.
 const DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// How long to spend clearing a refused request in total.
+///
+/// A per-read limit is not a limit: a byte every two hundred milliseconds
+/// keeps every read inside its timeout, and the byte ceiling is far enough
+/// away that the two together come to hours. This is the number that stops it.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Most bytes to clear off the socket before closing anyway.
 const MAX_DRAIN: usize = 64 * 1024;
@@ -202,9 +209,11 @@ where
 fn drain(reader: &mut BufReader<TcpStream>) {
     let _ = reader.get_ref().set_read_timeout(Some(DRAIN_TIMEOUT));
 
+    let started = std::time::Instant::now();
     let mut sink = [0u8; 4096];
     let mut total = 0usize;
-    while total < MAX_DRAIN {
+
+    while total < MAX_DRAIN && started.elapsed() < DRAIN_DEADLINE {
         match reader.read(&mut sink) {
             Ok(0) | Err(_) => break,
             Ok(read) => total += read,

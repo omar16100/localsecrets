@@ -119,6 +119,25 @@
 - [x] a read or delete that finds nothing is recorded too
 - [x] lsec unseal --reset, which the API supported and the client could not reach
 
+## M10 — verification pass on the fixes
+- [x] compaction keeps the handle it already has rather than reopening the
+      path, so nothing after the rename can fail and lose a re-split
+- [x] the directory is flushed after the rename, so a power loss cannot bring
+      the old file back after the old shares have been destroyed
+- [x] a temporary file left by an interrupted compaction no longer blocks
+      every later one
+- [x] Host is checked, so DNS rebinding cannot walk around the content-type
+      rule; an Origin header is refused outright
+- [x] two Host headers are refused, as two Content-Lengths already were
+- [x] the drain after a refusal is bounded in total time, not only per read
+      and per byte, so a dribbling client cannot hold a worker for hours
+- [x] token lookup uses the constant-time comparison that was written for it
+- [x] an entropy failure while hashing a password is no longer reported as
+      the caller's password being invalid
+- [x] a request for a name that does not exist is recorded, so walking the
+      name space is visible in the trail
+- [x] the bulk-write comment says what it actually guarantees
+
 ## Next, if it is picked up again
 - [ ] Wire compaction to a command, so deleting a secret can also remove its
       earlier ciphertext from the file

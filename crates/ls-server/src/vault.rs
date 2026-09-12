@@ -567,8 +567,12 @@ impl Vault {
             return Err(VaultError::Conflict("user"));
         }
 
-        let password_hash =
-            password::hash(password).map_err(|_| VaultError::Invalid("password"))?;
+        let password_hash = password::hash(password).map_err(|error| match error {
+            // Telling the caller their password is invalid when the machine
+            // ran out of entropy sends them off fixing the wrong thing.
+            password::PasswordError::Entropy => VaultError::Crypto,
+            _ => VaultError::Invalid("password"),
+        })?;
         let id = new_id()?;
 
         self.commit(Event::UserCreated {
@@ -837,9 +841,14 @@ impl Vault {
     ) -> Result<(), VaultError> {
         self.require_unsealed()?;
         let key = validate::secret_key(key)?;
-        let (project_id, environment_id) =
-            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
+        let (project_id, environment_id) = self.resolve_and_record(
+            caller,
+            "secret.set",
+            project_slug,
+            environment_slug,
+            &target,
+        )?;
 
         if let Err(error) = self.authorise(
             caller,
@@ -881,9 +890,14 @@ impl Vault {
         key: &str,
     ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) =
-            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
+        let (project_id, environment_id) = self.resolve_and_record(
+            caller,
+            "secret.read",
+            project_slug,
+            environment_slug,
+            &target,
+        )?;
 
         if let Err(error) = self.authorise(
             caller,
@@ -924,9 +938,14 @@ impl Vault {
         environment_slug: &str,
     ) -> Result<Vec<RevealedSecret>, VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) =
-            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}");
+        let (project_id, environment_id) = self.resolve_and_record(
+            caller,
+            "secret.list",
+            project_slug,
+            environment_slug,
+            &target,
+        )?;
 
         if let Err(error) = self.authorise(
             caller,
@@ -970,9 +989,14 @@ impl Vault {
         key: &str,
     ) -> Result<(), VaultError> {
         self.require_unsealed()?;
-        let (project_id, environment_id) =
-            self.resolve_for(caller, project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
+        let (project_id, environment_id) = self.resolve_and_record(
+            caller,
+            "secret.delete",
+            project_slug,
+            environment_slug,
+            &target,
+        )?;
 
         if let Err(error) = self.authorise(
             caller,
@@ -1100,11 +1124,30 @@ impl Vault {
     ) -> Result<(String, String), VaultError> {
         match self.resolve(project_slug, environment_slug) {
             Ok(pair) => Ok(pair),
-            Err(error) if caller.kind == TokenKind::Machine => {
-                let _ = error;
-                Err(VaultError::Forbidden)
-            }
+            Err(_) if caller.kind == TokenKind::Machine => Err(VaultError::Forbidden),
             Err(error) => Err(error),
+        }
+    }
+
+    /// Resolve, recording the attempt if the name is not there.
+    ///
+    /// Someone walking the name space leaves no trace otherwise: the request
+    /// fails before it reaches the point where operations are recorded, so an
+    /// operator reading the trail sees nothing at all.
+    fn resolve_and_record(
+        &mut self,
+        caller: &Caller,
+        action: &str,
+        project_slug: &str,
+        environment_slug: &str,
+        target: &str,
+    ) -> Result<(String, String), VaultError> {
+        match self.resolve_for(caller, project_slug, environment_slug) {
+            Ok(pair) => Ok(pair),
+            Err(error) => {
+                self.record_audit(caller, action, target, "unknown")?;
+                Err(error)
+            }
         }
     }
 

@@ -245,8 +245,18 @@ impl State {
     }
 
     /// Find a token by the hash of the presented secret.
+    ///
+    /// The comparison is constant time. It does not have to be: an attacker
+    /// cannot choose the hash their guess produces, so there is nothing to walk
+    /// towards a byte at a time. It costs nothing, and a comparison of stored
+    /// credentials that is obviously constant time is one fewer thing to
+    /// reason about later.
     pub fn token_by_hash(&self, hash: &[u8]) -> Option<&Token> {
-        self.tokens.iter().find(|token| token.token_hash == hash)
+        use subtle::ConstantTimeEq as _;
+
+        self.tokens
+            .iter()
+            .find(|token| bool::from(token.token_hash.ct_eq(hash)))
     }
 
     /// Find a token by identifier.

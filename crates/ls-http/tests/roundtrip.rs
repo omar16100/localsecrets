@@ -252,6 +252,44 @@ fn a_body_over_the_limit_still_gets_its_answer() {
 }
 
 #[test]
+fn a_refused_client_cannot_hold_a_worker_by_dribbling() {
+    // After refusing a request the server clears the rest of it off the socket
+    // so the answer is not lost to a reset. Bounding that by bytes and by each
+    // read is not enough: a byte every so often keeps every read inside its
+    // timeout, and sixty-four thousand of those add up to hours.
+    use std::io::{Read, Write};
+    let (handle, client) = serve(echo);
+
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    socket
+        .write_all(b"PUT /has a space HTTP/1.1\r\nhost: h\r\ncontent-length: 100000\r\n\r\n")
+        .unwrap();
+    socket.flush().unwrap();
+
+    let mut dribbler = socket.try_clone().unwrap();
+    let writing = std::thread::spawn(move || {
+        for _ in 0..200 {
+            if dribbler.write_all(b"x").is_err() || dribbler.flush().is_err() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    });
+
+    let started = std::time::Instant::now();
+    let mut answer = String::new();
+    let _ = socket.read_to_string(&mut answer);
+    let waited = started.elapsed();
+    let _ = writing.join();
+
+    assert!(
+        waited < std::time::Duration::from_secs(8),
+        "the server stayed with a refused client for {waited:?}"
+    );
+    handle.shutdown();
+}
+
+#[test]
 fn several_clients_are_served_concurrently() {
     let served = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&served);

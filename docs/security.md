@@ -87,7 +87,9 @@ Adding any dependency requires a reason recorded in `12092026_localsecrets_plan.
 
 `lsec rekey --threshold 2 --shares 4` generates a new master key and a new root key, re-wraps each project's data key under the new root key, and rewrites the whole file. The old barrier stops existing.
 
-Rewriting rather than appending matters. An append-only file keeps whatever it is given, so a superseded barrier would still be sitting there: an old quorum would open the vault from the same file, and cutting the file back to the old barrier would undo the re-split entirely. After a rewrite there is nothing to cut back to.
+Rewriting rather than appending matters. The rewrite goes to a file beside the store and is renamed over it, and nothing after the rename is allowed to fail: the handle already open on the new file is kept rather than reopened, so there is no step between "the new file is live" and "the new shares have been handed back" that can go wrong. The directory is flushed afterwards, because a rename is only durable once it has been.
+
+ An append-only file keeps whatever it is given, so a superseded barrier would still be sitting there: an old quorum would open the vault from the same file, and cutting the file back to the old barrier would undo the re-split entirely. After a rewrite there is nothing to cut back to.
 
 What it still cannot do is reach copies made earlier. Anyone holding a quorum of the old shares and a backup taken before the re-split can open that backup. Re-splitting answers a lost share or a change of custodians. A share that was *exposed* needs a new vault and new secret values, because the old copy and the old shares are all an attacker needs.
 
@@ -99,12 +101,15 @@ A page on any website can send a request to `127.0.0.1` without the browser aski
 
 Every request that changes state must therefore carry `content-type: application/json`, which is not a content type a form can send, so the browser has to ask permission first and a hostile page never gets an answer. Without that rule, a page you merely visited could call `init` on a fresh vault: you would never see the shares, and could never initialise it yourself.
 
+That alone is not enough, because of DNS rebinding: a page on `evil.com` can point that name at `127.0.0.1`, after which the browser treats `http://evil.com:8787` as the same origin and its script may set any header it likes and read every answer. What distinguishes that case is the name the request was addressed to, which the browser always sends and the page cannot forge. Every request must therefore name this machine in its `Host` header, and a request carrying an `Origin` header is refused outright: nothing that legitimately talks to this server has one. Two `Host` headers are refused as well, for the same reason two `Content-Length` headers are.
+
 Both unauthenticated endpoints also share a rate limit. Share checksums are unkeyed, so well-formed nonsense is easy to produce, and enough of it pushes an unseal attempt past its threshold, fails the recombination, and discards whatever progress had been made.
 
 ## Limits worth knowing before you rely on this
 
 - The store holds every version of every secret ever written, because the log is append-only. Compaction exists but is not wired to a command yet, so deleting a secret stops it being served without removing its earlier ciphertext from the file.
 - The rate limit on logins is per address and lives in memory, so it resets on restart. The same is true of the limit on init and unseal, which is one budget shared by every caller.
+- A bulk write is validated whole before any of it is written, so a bad key or an oversized value refuses the batch. That is a validation guarantee and not a transaction: several appends cannot be made one atomic act, so a write that fails partway leaves the keys before it in place. Such a failure also marks the store unusable, so the server stops accepting writes rather than carrying on unclear.
 - If a request panics partway through an operation, the server seals itself rather than carry on: memory could otherwise disagree with the file, which is how a revoked token keeps working. The next unseal rebuilds the state from the file.
 - There is no TLS in the binary. Loopback plus a reverse proxy is the supported arrangement.
 

@@ -341,6 +341,76 @@ fn a_client_that_dribbles_its_head_is_cut_off() {
 }
 
 #[test]
+fn a_body_survives_a_head_terminator_split_across_two_arrivals() {
+    // The head is read in chunks, so the blank line that ends it can arrive in
+    // two pieces. Consuming one byte too many or too few there would eat the
+    // start of the body or leave a stray byte in front of it, and the only
+    // symptom would be a mangled value.
+    use std::io::{Read, Write};
+    let (handle, client) = serve(echo);
+
+    let body = br#"{"value":"the whole body, intact"}"#;
+
+    for split_after in 1..=3usize {
+        let head = format!(
+            "POST /v1/secrets HTTP/1.1\r\nhost: h\r\ncontent-length: {}\r\n\r\n",
+            body.len()
+        );
+        let head = head.as_bytes();
+        let cut = head.len() - (4 - split_after);
+
+        let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+        socket.write_all(&head[..cut]).unwrap();
+        socket.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        socket.write_all(&head[cut..]).unwrap();
+        socket.write_all(body).unwrap();
+        socket.flush().unwrap();
+
+        let mut answer = String::new();
+        socket.read_to_string(&mut answer).unwrap();
+
+        assert!(
+            answer.contains("the whole body, intact"),
+            "body mangled when the terminator was split after {split_after} of its bytes: {answer}"
+        );
+        assert!(
+            !answer.contains("\\\\"),
+            "stray bytes in front of the body: {answer}"
+        );
+    }
+
+    handle.shutdown();
+}
+
+#[test]
+fn a_head_arriving_one_byte_at_a_time_is_still_read_correctly() {
+    use std::io::{Read, Write};
+    let (handle, client) = serve(echo);
+
+    let body = b"one-byte-at-a-time";
+    let head = format!(
+        "POST /slow HTTP/1.1\r\nhost: h\r\nx-a: 1\r\ncontent-length: {}\r\n\r\n",
+        body.len()
+    );
+
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    for byte in head.as_bytes() {
+        socket.write_all(&[*byte]).unwrap();
+        socket.flush().unwrap();
+    }
+    socket.write_all(body).unwrap();
+    socket.flush().unwrap();
+
+    let mut answer = String::new();
+    socket.read_to_string(&mut answer).unwrap();
+
+    assert!(answer.contains("\"path\":\"/slow\""), "got {answer}");
+    assert!(answer.contains("one-byte-at-a-time"), "got {answer}");
+    handle.shutdown();
+}
+
+#[test]
 fn a_client_that_stops_halfway_through_a_head_is_let_go() {
     // The deadline is only looked at when bytes arrive, so a client that sends
     // half a request and then nothing has to be cut off by the socket timeout

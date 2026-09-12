@@ -127,6 +127,37 @@ impl Caller {
     }
 }
 
+/// What an operation needs from the caller.
+///
+/// There are no roles in v1. What there is, is a small fixed answer to "what
+/// is this token for", which is the difference between a leaked deploy token
+/// reading one environment and a leaked deploy token owning the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Capability {
+    /// Create the first account. The root token exists for this and nothing else.
+    Bootstrap,
+    /// Manage projects, environments, accounts, tokens, sealing and the audit trail.
+    Administer,
+    /// Read secret values.
+    ReadSecrets,
+    /// Write or delete secret values.
+    WriteSecrets,
+}
+
+impl Capability {
+    /// Whether a token of this kind carries this capability.
+    const fn granted_to(self, kind: TokenKind) -> bool {
+        match kind {
+            // Spent on first use, and useless for anything else in the meantime.
+            TokenKind::Root => matches!(self, Self::Bootstrap),
+            // A person. No roles in v1, so a session can do everything.
+            TokenKind::Session => true,
+            // A machine reads the one environment it was issued for.
+            TokenKind::Machine => matches!(self, Self::ReadSecrets),
+        }
+    }
+}
+
 /// A secret key and its plaintext value, on the way out to a caller.
 pub type RevealedSecret = (String, Zeroizing<Vec<u8>>);
 
@@ -281,6 +312,13 @@ impl Vault {
         self.pending_shares.clear();
     }
 
+    /// Drop the root key, if the caller is allowed to.
+    pub fn seal_as(&mut self, caller: &Caller) -> Result<(), VaultError> {
+        self.require(caller, Capability::Administer)?;
+        self.seal();
+        Ok(())
+    }
+
     /// Drop the root key. Everything becomes unreadable until unsealed again.
     pub fn seal(&mut self) {
         self.root_key = None;
@@ -323,8 +361,17 @@ impl Vault {
     // --- users and tokens --------------------------------------------------
 
     /// Create a user account.
-    pub fn create_user(&mut self, email: &str, password: &str) -> Result<String, VaultError> {
+    ///
+    /// The root token may do this once; using it spends it, so a copy left in
+    /// terminal scrollback is not a permanent key to everything.
+    pub fn create_user(
+        &mut self,
+        caller: &Caller,
+        email: &str,
+        password: &str,
+    ) -> Result<String, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Bootstrap)?;
         let email = validate::email(email)?;
 
         if self.state.user_by_email(&email).is_some() {
@@ -342,6 +389,13 @@ impl Vault {
             created_at: Timestamp::now(),
         })?;
 
+        if caller.kind == TokenKind::Root {
+            self.commit(Event::TokenRevoked {
+                id: caller.token_id.clone(),
+                at: Timestamp::now(),
+            })?;
+        }
+
         Ok(id)
     }
 
@@ -353,6 +407,7 @@ impl Vault {
         ttl_seconds: i64,
     ) -> Result<Zeroizing<String>, VaultError> {
         self.require_unsealed()?;
+        check_lifetime(ttl_seconds)?;
 
         let normalised = validate::email(email).unwrap_or_default();
         let found = self.state.user_by_email(&normalised).cloned();
@@ -385,12 +440,17 @@ impl Vault {
     /// Mint a token for a machine, confined to one environment.
     pub fn issue_machine_token(
         &mut self,
+        caller: &Caller,
         project_slug: &str,
         environment_slug: &str,
         label: &str,
         ttl_seconds: Option<i64>,
     ) -> Result<Zeroizing<String>, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
+        if let Some(ttl) = ttl_seconds {
+            check_lifetime(ttl)?;
+        }
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
 
         self.issue_token(
@@ -404,8 +464,14 @@ impl Vault {
     }
 
     /// Stop a token from working.
-    pub fn revoke_token(&mut self, id: &str) -> Result<(), VaultError> {
+    ///
+    /// Revoking your own token is always allowed, which is what logging out is.
+    /// Revoking someone else's needs the run of the place.
+    pub fn revoke_token(&mut self, caller: &Caller, id: &str) -> Result<(), VaultError> {
         self.require_unsealed()?;
+        if id != caller.token_id {
+            self.require(caller, Capability::Administer)?;
+        }
         if self.state.token(id).is_none() {
             return Err(VaultError::NotFound("token"));
         }
@@ -468,8 +534,14 @@ impl Vault {
     // --- projects and environments -----------------------------------------
 
     /// Create a project, with a data key of its own.
-    pub fn create_project(&mut self, slug: &str, name: &str) -> Result<String, VaultError> {
+    pub fn create_project(
+        &mut self,
+        caller: &Caller,
+        slug: &str,
+        name: &str,
+    ) -> Result<String, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
         let slug = validate::slug(slug, "project slug")?;
 
         if self.state.project_by_slug(&slug).is_some() {
@@ -497,11 +569,13 @@ impl Vault {
     /// Create an environment inside a project.
     pub fn create_environment(
         &mut self,
+        caller: &Caller,
         project_slug: &str,
         slug: &str,
         name: &str,
     ) -> Result<String, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
         let slug = validate::slug(slug, "environment slug")?;
 
         let project_id = self
@@ -532,8 +606,9 @@ impl Vault {
     }
 
     /// Every project slug, in creation order.
-    pub fn project_slugs(&self) -> Result<Vec<String>, VaultError> {
+    pub fn project_slugs(&self, caller: &Caller) -> Result<Vec<String>, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
         Ok(self
             .state
             .projects
@@ -543,8 +618,13 @@ impl Vault {
     }
 
     /// Every environment slug of a project.
-    pub fn environment_slugs(&self, project_slug: &str) -> Result<Vec<String>, VaultError> {
+    pub fn environment_slugs(
+        &self,
+        caller: &Caller,
+        project_slug: &str,
+    ) -> Result<Vec<String>, VaultError> {
         self.require_unsealed()?;
+        self.require(caller, Capability::Administer)?;
         let project = self
             .state
             .project_by_slug(project_slug)
@@ -574,7 +654,7 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(caller, Capability::WriteSecrets, &project_id, &environment_id) {
             self.record_audit(caller, "secret.set", &target, "denied")?;
             return Err(error);
         }
@@ -607,7 +687,7 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(caller, Capability::ReadSecrets, &project_id, &environment_id) {
             self.record_audit(caller, "secret.read", &target, "denied")?;
             return Err(error);
         }
@@ -642,7 +722,7 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}");
 
-        if let Err(error) = self.authorise(caller, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(caller, Capability::ReadSecrets, &project_id, &environment_id) {
             self.record_audit(caller, "secret.list", &target, "denied")?;
             return Err(error);
         }
@@ -682,7 +762,7 @@ impl Vault {
         let (project_id, environment_id) = self.resolve(project_slug, environment_slug)?;
         let target = format!("{project_slug}/{environment_slug}/{key}");
 
-        if let Err(error) = self.authorise(caller, &project_id, &environment_id) {
+        if let Err(error) = self.authorise(caller, Capability::WriteSecrets, &project_id, &environment_id) {
             self.record_audit(caller, "secret.delete", &target, "denied")?;
             return Err(error);
         }
@@ -705,7 +785,8 @@ impl Vault {
 
     /// Every audit entry, oldest first. Requires an unsealed vault, because
     /// the trail lives in the same sealed log as everything else.
-    pub fn audit_trail(&mut self) -> Result<Vec<AuditEntry>, VaultError> {
+    pub fn audit_trail(&mut self, caller: &Caller) -> Result<Vec<AuditEntry>, VaultError> {
+        self.require(caller, Capability::Administer)?;
         let root_key = self.root_key.as_ref().ok_or(VaultError::Sealed)?;
         let records = self.log.read_records(root_key)?;
 
@@ -784,14 +865,26 @@ impl Vault {
         Ok((project.id.clone(), environment.id.clone()))
     }
 
-    /// A machine token may only touch the environment it was issued for.
-    /// People and the root token are not confined, because v1 has no roles.
+    /// Check a capability on its own.
+    fn require(&self, caller: &Caller, capability: Capability) -> Result<(), VaultError> {
+        if capability.granted_to(caller.kind) {
+            Ok(())
+        } else {
+            Err(VaultError::Forbidden)
+        }
+    }
+
+    /// Check a capability and, for a machine token, that this is the one
+    /// environment it was issued for.
     fn authorise(
         &self,
         caller: &Caller,
+        capability: Capability,
         project_id: &str,
         environment_id: &str,
     ) -> Result<(), VaultError> {
+        self.require(caller, capability)?;
+
         if caller.kind != TokenKind::Machine {
             return Ok(());
         }
@@ -816,6 +909,19 @@ impl Vault {
             .unwrap_key(&(&project.data_key).into(), &project_key_context(project_id))
             .map_err(|_| VaultError::Crypto)
     }
+}
+
+/// Longest token lifetime accepted, in seconds. Beyond this an expiry could
+/// fall outside the timestamp format, and a value that cannot be read back
+/// would break the replay permanently on the next restart.
+const MAX_LIFETIME_SECONDS: i64 = 100 * 365 * 86_400;
+
+fn check_lifetime(seconds: i64) -> Result<(), VaultError> {
+    // Not `abs`: i64::MIN has no positive counterpart and negating it panics.
+    if !(-MAX_LIFETIME_SECONDS..=MAX_LIFETIME_SECONDS).contains(&seconds) {
+        return Err(VaultError::Invalid("token lifetime"));
+    }
+    Ok(())
 }
 
 /// Associated data binding a data key to the project that owns it, so a key

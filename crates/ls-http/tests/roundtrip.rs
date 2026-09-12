@@ -128,6 +128,120 @@ fn a_malformed_request_gets_a_bad_request_answer() {
 }
 
 #[test]
+fn a_refusal_always_reaches_a_client_that_sent_a_body() {
+    // The server refuses this before reading the body. Closing with those bytes
+    // still unread makes the operating system reset the connection, which
+    // throws away the answer already written. The race is timing dependent, so
+    // this runs enough times to catch it.
+    let (handle, client) = serve(echo);
+
+    for attempt in 0..200 {
+        let result = client.send(
+            "PUT",
+            "/has a space",
+            &[("content-type", "application/json")],
+            br#"{"value":"do-not-lose-the-answer"}"#,
+        );
+
+        match result {
+            Ok(response) => assert_eq!(response.status, 400),
+            Err(e) => panic!("attempt {attempt} lost the answer: {e:?}"),
+        }
+    }
+
+    handle.shutdown();
+}
+
+#[test]
+fn a_refusal_reaches_a_client_whose_body_arrives_late() {
+    // The head and the body arrive in separate segments, so the server decides
+    // to refuse before the body is on the socket. If it then closes with those
+    // bytes unread, the connection is reset and the answer it already wrote is
+    // thrown away. This is the timing that makes such a bug intermittent.
+    use std::io::{Read, Write};
+    let (handle, client) = serve(echo);
+
+    let body = br#"{"value":"do-not-lose-the-answer"}"#;
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    socket
+        .write_all(
+            format!(
+                "PUT /has a space HTTP/1.1\r\nhost: h\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    socket.flush().unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let _ = socket.write_all(body);
+    let _ = socket.flush();
+
+    let mut answer = String::new();
+    socket.read_to_string(&mut answer).unwrap();
+
+    assert!(
+        answer.starts_with("HTTP/1.1 400 "),
+        "the client never received the refusal: {answer:?}"
+    );
+    handle.shutdown();
+}
+
+#[test]
+fn a_refused_request_that_carried_a_body_still_gets_its_answer() {
+    // The server rejects this before reading the body. If it closes with that
+    // body still unread, the connection is reset and the client loses the
+    // response it was already sent.
+    use std::io::{Read, Write};
+    let (handle, client) = serve(echo);
+
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    socket
+        .write_all(
+            b"PUT /has a space HTTP/1.1\r\nHost: h\r\nContent-Length: 24\r\n\r\n              {\"value\":\"some value\"}",
+        )
+        .unwrap();
+    socket.flush().unwrap();
+
+    let mut answer = String::new();
+    socket.read_to_string(&mut answer).unwrap();
+
+    assert!(
+        answer.starts_with("HTTP/1.1 400 "),
+        "the client never received the refusal: {answer:?}"
+    );
+    handle.shutdown();
+}
+
+#[test]
+fn a_body_over_the_limit_still_gets_its_answer() {
+    use std::io::{Read, Write};
+    let limits = Limits {
+        max_body: 16,
+        ..Limits::default()
+    };
+    let (handle, client) = serve_with(limits, echo);
+
+    let mut socket = std::net::TcpStream::connect(client.address()).unwrap();
+    let body = vec![b'x'; 4096];
+    socket
+        .write_all(format!("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes())
+        .unwrap();
+    let _ = socket.write_all(&body);
+    let _ = socket.flush();
+
+    let mut answer = String::new();
+    socket.read_to_string(&mut answer).unwrap();
+
+    assert!(
+        answer.starts_with("HTTP/1.1 413 "),
+        "the client never received the refusal: {answer:?}"
+    );
+    handle.shutdown();
+}
+
+#[test]
 fn several_clients_are_served_concurrently() {
     let served = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&served);

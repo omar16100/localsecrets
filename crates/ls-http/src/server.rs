@@ -6,7 +6,7 @@
 //! server whose clients are a CLI and a handful of machines.
 
 use crate::{HttpError, Limits, Request, Response};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read as _, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +16,12 @@ use std::time::Duration;
 
 /// How long a connection may take to deliver its request before it is dropped.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to spend clearing a refused request off the socket before closing.
+const DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Most bytes to clear off the socket before closing anyway.
+const MAX_DRAIN: usize = 64 * 1024;
 
 /// A bound listener, not yet serving.
 #[derive(Debug)]
@@ -142,17 +148,52 @@ where
     };
     let mut reader = BufReader::new(stream);
 
-    let response = match Request::read(&mut reader, limits) {
-        Ok(request) => run_handler(handler, request),
+    // A refused request may still have a body on the way, which has to be
+    // cleared off the socket before closing. A served one has been read whole.
+    let (response, refused) = match Request::read(&mut reader, limits) {
+        Ok(request) => (run_handler(handler, request), false),
         Err(HttpError::Incomplete) => return, // a probe that sent nothing
-        Err(error) => Response::json(
-            error.status(),
-            &format!("{{\"error\":\"{}\"}}", escape(&error.to_string())),
+        Err(error) => (
+            Response::json(
+                error.status(),
+                &format!("{{\"error\":\"{}\"}}", escape(&error.to_string())),
+            ),
+            true,
         ),
     };
 
     let _ = response.write_to(&mut writer);
     let _ = writer.flush();
+
+    if refused {
+        // Send our end of the close first, so the client can finish reading the
+        // answer and close in turn, which ends the drain below promptly.
+        let _ = writer.shutdown(std::net::Shutdown::Write);
+        drain(&mut reader);
+    }
+}
+
+/// Read and throw away whatever the client is still sending.
+///
+/// A request refused before its body was read leaves those bytes unread on the
+/// socket. Closing then makes the operating system reset the connection, which
+/// discards the answer already written: the client sees the connection drop
+/// rather than the 400 explaining what was wrong. Reading them first lets the
+/// close be orderly.
+///
+/// Bounded in both bytes and time, so this cannot be turned into a way to make
+/// the server read an unlimited amount from a caller it has already refused.
+fn drain(reader: &mut BufReader<TcpStream>) {
+    let _ = reader.get_ref().set_read_timeout(Some(DRAIN_TIMEOUT));
+
+    let mut sink = [0u8; 4096];
+    let mut total = 0usize;
+    while total < MAX_DRAIN {
+        match reader.read(&mut sink) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => total += read,
+        }
+    }
 }
 
 /// Run the handler, turning a panic into a 500 rather than a dead worker.

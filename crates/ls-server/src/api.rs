@@ -56,16 +56,18 @@ impl Api {
             ["v1", "sys", "health"] => self.only(method, "GET", || self.health()),
             ["v1", "sys", "init"] => self.only(method, "POST", || self.init(request)),
             ["v1", "sys", "unseal"] => self.only(method, "POST", || self.unseal(request)),
-            ["v1", "sys", "seal"] => self.only(method, "POST", || self.authed(request, |_, v| {
-                v.seal();
-                Ok(Response::json(200, r#"{"sealed":true}"#))
-            })),
+            ["v1", "sys", "seal"] => self.only(method, "POST", || {
+                self.authed(request, |caller, vault| {
+                    vault.seal_as(&caller)?;
+                    Ok(Response::json(200, r#"{"sealed":true}"#))
+                })
+            }),
 
             ["v1", "users"] => self.only(method, "POST", || self.create_user(request)),
             ["v1", "auth", "login"] => self.only(method, "POST", || self.login(request)),
             ["v1", "auth", "logout"] => self.only(method, "POST", || {
                 self.authed(request, |caller, vault| {
-                    vault.revoke_token(&caller.token_id)?;
+                    vault.revoke_token(&caller, &caller.token_id)?;
                     Ok(Response::json(200, r#"{"ok":true}"#))
                 })
             }),
@@ -74,16 +76,16 @@ impl Api {
 
             ["v1", "tokens"] => self.only(method, "POST", || self.issue_token(request)),
             ["v1", "tokens", id] => self.only(method, "DELETE", || {
-                self.authed(request, |_, vault| {
-                    vault.revoke_token(id)?;
+                self.authed(request, |caller, vault| {
+                    vault.revoke_token(&caller, id)?;
                     Ok(Response::new(204, Vec::new()))
                 })
             }),
 
             ["v1", "projects"] => match method {
-                "GET" => self.authed(request, |_, vault| {
+                "GET" => self.authed(request, |caller, vault| {
                     let slugs: Vec<Value> = vault
-                        .project_slugs()?
+                        .project_slugs(&caller)?
                         .into_iter()
                         .map(Value::from)
                         .collect();
@@ -97,9 +99,9 @@ impl Api {
             },
 
             ["v1", "projects", project, "envs"] => match method {
-                "GET" => self.authed(request, |_, vault| {
+                "GET" => self.authed(request, |caller, vault| {
                     let slugs: Vec<Value> = vault
-                        .environment_slugs(project)?
+                        .environment_slugs(&caller, project)?
                         .into_iter()
                         .map(Value::from)
                         .collect();
@@ -230,8 +232,8 @@ impl Api {
             return error_response(400, "email and password are required");
         };
 
-        self.authed(request, |_, vault| {
-            let id = vault.create_user(&email, &password)?;
+        self.authed(request, |caller, vault| {
+            let id = vault.create_user(&caller, &email, &password)?;
             ls_log::info!("user created", id = id);
             Ok(Response::json(
                 201,
@@ -290,8 +292,8 @@ impl Api {
         let label = text(&body, "label").unwrap_or_else(|| "machine".to_owned());
         let ttl = body.get("ttl_seconds").and_then(Value::as_i64);
 
-        self.authed(request, |_, vault| {
-            let token = vault.issue_machine_token(&project, &environment, &label, ttl)?;
+        self.authed(request, |caller, vault| {
+            let token = vault.issue_machine_token(&caller, &project, &environment, &label, ttl)?;
             let id = vault
                 .authenticate(&token)
                 .map(|caller| caller.token_id)
@@ -326,8 +328,8 @@ impl Api {
         };
         let name = text(&body, "name").unwrap_or_else(|| slug.clone());
 
-        self.authed(request, |_, vault| {
-            let id = vault.create_project(&slug, &name)?;
+        self.authed(request, |caller, vault| {
+            let id = vault.create_project(&caller, &slug, &name)?;
             ls_log::info!("project created", slug = slug);
             Ok(Response::json(
                 201,
@@ -347,8 +349,8 @@ impl Api {
         };
         let name = text(&body, "name").unwrap_or_else(|| slug.clone());
 
-        self.authed(request, |_, vault| {
-            let id = vault.create_environment(project, &slug, &name)?;
+        self.authed(request, |caller, vault| {
+            let id = vault.create_environment(&caller, project, &slug, &name)?;
             ls_log::info!("environment created", project = project, slug = slug);
             Ok(Response::json(
                 201,
@@ -445,9 +447,9 @@ impl Api {
     }
 
     fn audit(&self, request: &Request) -> Response {
-        self.authed(request, |_, vault| {
+        self.authed(request, |caller, vault| {
             let entries: Vec<Value> = vault
-                .audit_trail()?
+                .audit_trail(&caller)?
                 .into_iter()
                 .map(|entry| {
                     Value::object([

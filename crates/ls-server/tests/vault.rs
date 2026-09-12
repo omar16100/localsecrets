@@ -33,6 +33,7 @@ struct Ready {
     vault: Vault,
     shares: Vec<String>,
     session: String,
+    caller: ls_server::Caller,
 }
 
 fn ready(label: &str) -> Ready {
@@ -41,19 +42,24 @@ fn ready(label: &str) -> Ready {
     let outcome = vault.init(3, 5).unwrap();
     let shares = outcome.shares.clone();
 
+    // The root token creates the first account, and is spent doing it.
+    let root = vault.authenticate(&outcome.root_token).unwrap();
     vault
-        .create_user("dev@example.com", "correct horse battery staple")
+        .create_user(&root, "dev@example.com", "correct horse battery staple")
         .unwrap();
+
     let session = vault
         .login("dev@example.com", "correct horse battery staple", 3600)
         .unwrap()
         .to_string();
+    let caller = vault.authenticate(&session).unwrap();
 
     Ready {
         dir,
         vault,
         shares,
         session,
+        caller,
     }
 }
 
@@ -117,13 +123,13 @@ fn a_single_share_configuration_is_allowed_for_one_operator() {
 #[test]
 fn sealing_makes_secrets_unreachable() {
     let mut fixture = ready("seal");
-    fixture.vault.create_project("demo", "Demo").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
 
     fixture.vault.seal();
 
     assert!(fixture.vault.is_sealed());
     assert!(matches!(
-        fixture.vault.create_project("other", "Other"),
+        fixture.vault.create_project(&fixture.caller, "other", "Other"),
         Err(VaultError::Sealed)
     ));
 }
@@ -228,8 +234,8 @@ fn unseal_progress_can_be_abandoned() {
 #[test]
 fn everything_comes_back_after_a_restart_and_an_unseal() {
     let mut fixture = ready("restart");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture
         .vault
@@ -261,7 +267,7 @@ fn everything_comes_back_after_a_restart_and_an_unseal() {
 #[test]
 fn a_sealed_vault_cannot_read_anything_even_though_the_file_is_there() {
     let mut fixture = ready("sealed-read");
-    fixture.vault.create_project("demo", "Demo").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
     let session = fixture.session.clone();
 
     fixture.vault.seal();
@@ -306,7 +312,7 @@ fn the_same_email_cannot_be_registered_twice() {
     let mut fixture = ready("dup-user");
 
     assert!(matches!(
-        fixture.vault.create_user("DEV@example.com", "another good password"),
+        fixture.vault.create_user(&fixture.caller, "DEV@example.com", "another good password"),
         Err(VaultError::Conflict(_))
     ));
 }
@@ -315,7 +321,7 @@ fn the_same_email_cannot_be_registered_twice() {
 fn a_password_that_is_too_short_is_refused() {
     let mut fixture = ready("short-password");
 
-    assert!(fixture.vault.create_user("new@example.com", "short").is_err());
+    assert!(fixture.vault.create_user(&fixture.caller, "new@example.com", "short").is_err());
 }
 
 #[test]
@@ -332,7 +338,7 @@ fn a_revoked_session_stops_working() {
     let mut fixture = ready("revoke");
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
 
-    fixture.vault.revoke_token(&caller.token_id).unwrap();
+    fixture.vault.revoke_token(&fixture.caller, &caller.token_id).unwrap();
 
     assert!(fixture.vault.authenticate(&fixture.session).is_none());
 }
@@ -355,8 +361,8 @@ fn an_expired_session_stops_working() {
 #[test]
 fn a_secret_written_comes_back_exactly() {
     let mut fixture = ready("roundtrip");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
 
     fixture
@@ -371,8 +377,8 @@ fn a_secret_written_comes_back_exactly() {
 #[test]
 fn writing_a_secret_again_replaces_it() {
     let mut fixture = ready("replace");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
 
     fixture.vault.set_secret(&caller, "demo", "dev", "K", b"first").unwrap();
@@ -387,8 +393,8 @@ fn writing_a_secret_again_replaces_it() {
 #[test]
 fn a_deleted_secret_is_gone() {
     let mut fixture = ready("delete");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture.vault.set_secret(&caller, "demo", "dev", "K", b"v").unwrap();
 
@@ -403,8 +409,8 @@ fn a_deleted_secret_is_gone() {
 #[test]
 fn listing_an_environment_returns_its_secrets_decrypted_and_sorted() {
     let mut fixture = ready("list");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture.vault.set_secret(&caller, "demo", "dev", "ZED", b"z").unwrap();
     fixture.vault.set_secret(&caller, "demo", "dev", "ALPHA", b"a").unwrap();
@@ -429,8 +435,8 @@ fn each_project_gets_its_own_data_key() {
     // The same value in two projects must not produce the same ciphertext.
     let mut fixture = ready("separate-keys");
     for slug in ["one", "two"] {
-        fixture.vault.create_project(slug, slug).unwrap();
-        fixture.vault.create_environment(slug, "dev", "Development").unwrap();
+        fixture.vault.create_project(&fixture.caller, slug, slug).unwrap();
+        fixture.vault.create_environment(&fixture.caller, slug, "dev", "Development").unwrap();
     }
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture.vault.set_secret(&caller, "one", "dev", "K", b"same value").unwrap();
@@ -449,10 +455,10 @@ fn each_project_gets_its_own_data_key() {
 #[test]
 fn the_same_project_slug_cannot_be_used_twice() {
     let mut fixture = ready("dup-project");
-    fixture.vault.create_project("demo", "Demo").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
 
     assert!(matches!(
-        fixture.vault.create_project("demo", "Another"),
+        fixture.vault.create_project(&fixture.caller, "demo", "Another"),
         Err(VaultError::Conflict(_))
     ));
 }
@@ -460,14 +466,14 @@ fn the_same_project_slug_cannot_be_used_twice() {
 #[test]
 fn the_same_environment_slug_can_be_reused_in_another_project() {
     let mut fixture = ready("env-slug");
-    fixture.vault.create_project("one", "One").unwrap();
-    fixture.vault.create_project("two", "Two").unwrap();
+    fixture.vault.create_project(&fixture.caller, "one", "One").unwrap();
+    fixture.vault.create_project(&fixture.caller, "two", "Two").unwrap();
 
-    fixture.vault.create_environment("one", "dev", "Development").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "one", "dev", "Development").unwrap();
 
-    assert!(fixture.vault.create_environment("two", "dev", "Development").is_ok());
+    assert!(fixture.vault.create_environment(&fixture.caller, "two", "dev", "Development").is_ok());
     assert!(matches!(
-        fixture.vault.create_environment("one", "dev", "Again"),
+        fixture.vault.create_environment(&fixture.caller, "one", "dev", "Again"),
         Err(VaultError::Conflict(_))
     ));
 }
@@ -482,7 +488,7 @@ fn an_unknown_project_or_environment_is_not_found() {
         Err(VaultError::NotFound(_))
     ));
 
-    fixture.vault.create_project("demo", "Demo").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
     assert!(matches!(
         fixture.vault.get_secret(&caller, "demo", "nope", "K"),
         Err(VaultError::NotFound(_))
@@ -492,13 +498,13 @@ fn an_unknown_project_or_environment_is_not_found() {
 #[test]
 fn a_bad_slug_or_key_is_refused() {
     let mut fixture = ready("validation");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
 
-    assert!(fixture.vault.create_project("", "Empty").is_err());
-    assert!(fixture.vault.create_project("Has Spaces", "x").is_err());
-    assert!(fixture.vault.create_project("../escape", "x").is_err());
+    assert!(fixture.vault.create_project(&fixture.caller, "", "Empty").is_err());
+    assert!(fixture.vault.create_project(&fixture.caller, "Has Spaces", "x").is_err());
+    assert!(fixture.vault.create_project(&fixture.caller, "../escape", "x").is_err());
     assert!(
         fixture.vault.set_secret(&caller, "demo", "dev", "", b"v").is_err(),
         "an empty key"
@@ -516,16 +522,16 @@ fn a_bad_slug_or_key_is_refused() {
 #[test]
 fn a_machine_token_reads_only_the_environment_it_was_scoped_to() {
     let mut fixture = ready("machine-scope");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
-    fixture.vault.create_environment("demo", "prod", "Production").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "prod", "Production").unwrap();
     let human = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture.vault.set_secret(&human, "demo", "dev", "K", b"dev value").unwrap();
     fixture.vault.set_secret(&human, "demo", "prod", "K", b"prod value").unwrap();
 
     let token = fixture
         .vault
-        .issue_machine_token("demo", "dev", "ci", None)
+        .issue_machine_token(&fixture.caller, "demo", "dev", "ci", None)
         .unwrap()
         .to_string();
     let machine = fixture.vault.authenticate(&token).unwrap();
@@ -546,10 +552,10 @@ fn a_machine_token_reads_only_the_environment_it_was_scoped_to() {
 #[test]
 fn a_machine_token_cannot_be_issued_for_an_environment_that_does_not_exist() {
     let mut fixture = ready("machine-missing");
-    fixture.vault.create_project("demo", "Demo").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
 
     assert!(matches!(
-        fixture.vault.issue_machine_token("demo", "nope", "ci", None),
+        fixture.vault.issue_machine_token(&fixture.caller, "demo", "nope", "ci", None),
         Err(VaultError::NotFound(_))
     ));
 }
@@ -557,12 +563,12 @@ fn a_machine_token_cannot_be_issued_for_an_environment_that_does_not_exist() {
 #[test]
 fn a_machine_token_can_be_given_a_lifetime() {
     let mut fixture = ready("machine-ttl");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
 
     let expired = fixture
         .vault
-        .issue_machine_token("demo", "dev", "ci", Some(-1))
+        .issue_machine_token(&fixture.caller, "demo", "dev", "ci", Some(-1))
         .unwrap()
         .to_string();
 
@@ -574,8 +580,8 @@ fn a_machine_token_can_be_given_a_lifetime() {
 #[test]
 fn no_secret_value_is_readable_in_the_file() {
     let mut fixture = ready("at-rest");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture
         .vault
@@ -616,8 +622,8 @@ fn no_token_is_readable_in_the_file() {
 #[test]
 fn secret_operations_are_recorded_without_their_values() {
     let mut fixture = ready("audit");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
     let caller = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture
         .vault
@@ -625,7 +631,7 @@ fn secret_operations_are_recorded_without_their_values() {
         .unwrap();
     fixture.vault.get_secret(&caller, "demo", "dev", "DB_URL").unwrap();
 
-    let trail = fixture.vault.audit_trail().unwrap();
+    let trail = fixture.vault.audit_trail(&fixture.caller).unwrap();
 
     let actions: Vec<&str> = trail.iter().map(|entry| entry.action.as_str()).collect();
     assert!(actions.contains(&"secret.set"), "got {actions:?}");
@@ -639,23 +645,299 @@ fn secret_operations_are_recorded_without_their_values() {
 #[test]
 fn a_refused_read_is_recorded_too() {
     let mut fixture = ready("audit-denied");
-    fixture.vault.create_project("demo", "Demo").unwrap();
-    fixture.vault.create_environment("demo", "dev", "Development").unwrap();
-    fixture.vault.create_environment("demo", "prod", "Production").unwrap();
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "prod", "Production").unwrap();
     let human = fixture.vault.authenticate(&fixture.session).unwrap();
     fixture.vault.set_secret(&human, "demo", "prod", "K", b"v").unwrap();
 
     let token = fixture
         .vault
-        .issue_machine_token("demo", "dev", "ci", None)
+        .issue_machine_token(&fixture.caller, "demo", "dev", "ci", None)
         .unwrap()
         .to_string();
     let machine = fixture.vault.authenticate(&token).unwrap();
     let _ = fixture.vault.get_secret(&machine, "demo", "prod", "K");
 
-    let trail = fixture.vault.audit_trail().unwrap();
+    let trail = fixture.vault.audit_trail(&fixture.caller).unwrap();
     assert!(
         trail.iter().any(|entry| entry.outcome == "denied"),
         "a refused read should be visible afterwards"
     );
+}
+
+// --- what each kind of token may do ----------------------------------------
+
+/// A vault with a project, an environment, a secret, and a machine token.
+fn with_machine(label: &str) -> (Ready, ls_server::Caller) {
+    let mut fixture = ready(label);
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
+    let human = fixture.vault.authenticate(&fixture.session).unwrap();
+    fixture.vault.set_secret(&human, "demo", "dev", "K", b"v").unwrap();
+
+    let token = fixture
+        .vault
+        .issue_machine_token(&fixture.caller, "demo", "dev", "ci", None)
+        .unwrap()
+        .to_string();
+    let machine = fixture.vault.authenticate(&token).unwrap();
+    (fixture, machine)
+}
+
+#[test]
+fn a_machine_token_cannot_create_a_user_and_escalate() {
+    // Otherwise a leaked deploy token becomes an account, and an account can
+    // read every project.
+    let (mut fixture, machine) = with_machine("machine-user");
+
+    assert!(matches!(
+        fixture
+            .vault
+            .create_user(&machine, "attacker@example.com", "a long enough password"),
+        Err(VaultError::Forbidden)
+    ));
+}
+
+#[test]
+fn a_machine_token_cannot_create_projects_or_environments() {
+    let (mut fixture, machine) = with_machine("machine-projects");
+
+    assert!(matches!(
+        fixture.vault.create_project(&machine, "other", "Other"),
+        Err(VaultError::Forbidden)
+    ));
+    assert!(matches!(
+        fixture
+            .vault
+            .create_environment(&machine, "demo", "prod", "Production"),
+        Err(VaultError::Forbidden)
+    ));
+}
+
+#[test]
+fn a_machine_token_cannot_mint_tokens_or_revoke_anyone_elses() {
+    let (mut fixture, machine) = with_machine("machine-tokens");
+
+    assert!(matches!(
+        fixture
+            .vault
+            .issue_machine_token(&machine, "demo", "dev", "another", None),
+        Err(VaultError::Forbidden)
+    ));
+    assert!(
+        matches!(
+            fixture.vault.revoke_token(&machine, &fixture.caller.token_id),
+            Err(VaultError::Forbidden)
+        ),
+        "a machine token must not be able to log a person out"
+    );
+}
+
+#[test]
+fn any_token_can_revoke_itself() {
+    // A job that is finished should be able to burn its own credential.
+    let (mut fixture, machine) = with_machine("machine-self-revoke");
+    let own = machine.token_id.clone();
+
+    assert!(fixture.vault.revoke_token(&machine, &own).is_ok());
+
+    let token_id = machine.token_id.clone();
+    assert!(
+        fixture.vault.revoke_token(&machine, &token_id).is_ok(),
+        "revoking twice is harmless"
+    );
+    assert!(
+        !fixture
+            .vault
+            .audit_trail(&fixture.caller)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_machine_token_cannot_read_the_audit_trail() {
+    let (mut fixture, machine) = with_machine("machine-audit");
+
+    assert!(matches!(
+        fixture.vault.audit_trail(&machine),
+        Err(VaultError::Forbidden)
+    ));
+}
+
+#[test]
+fn a_machine_token_cannot_list_projects() {
+    let (fixture, machine) = with_machine("machine-list");
+
+    assert!(matches!(
+        fixture.vault.project_slugs(&machine),
+        Err(VaultError::Forbidden)
+    ));
+}
+
+#[test]
+fn a_machine_token_reads_but_does_not_write() {
+    // The CLI tells the operator a machine token can read its environment and
+    // nothing else. That has to be true.
+    let (mut fixture, machine) = with_machine("machine-readonly");
+
+    assert_eq!(
+        fixture.vault.get_secret(&machine, "demo", "dev", "K").unwrap().as_slice(),
+        b"v"
+    );
+    assert!(fixture.vault.list_secrets(&machine, "demo", "dev").is_ok());
+
+    assert!(matches!(
+        fixture.vault.set_secret(&machine, "demo", "dev", "K", b"changed"),
+        Err(VaultError::Forbidden)
+    ));
+    assert!(matches!(
+        fixture.vault.delete_secret(&machine, "demo", "dev", "K"),
+        Err(VaultError::Forbidden)
+    ));
+    assert_eq!(
+        fixture.vault.get_secret(&machine, "demo", "dev", "K").unwrap().as_slice(),
+        b"v",
+        "the value must be unchanged"
+    );
+}
+
+#[test]
+fn a_refused_write_by_a_machine_token_is_recorded() {
+    let (mut fixture, machine) = with_machine("machine-write-audit");
+    let _ = fixture.vault.set_secret(&machine, "demo", "dev", "K", b"changed");
+
+    let trail = fixture.vault.audit_trail(&fixture.caller).unwrap();
+    assert!(
+        trail
+            .iter()
+            .any(|entry| entry.action == "secret.set" && entry.outcome == "denied"),
+        "a refused write should be visible afterwards"
+    );
+}
+
+#[test]
+fn the_root_token_may_only_create_the_first_user() {
+    let dir = TempDir::new("root-scope");
+    let mut vault = Vault::open(&dir.file()).unwrap();
+    let outcome = vault.init(1, 1).unwrap();
+    let root_secret = outcome.root_token.to_string();
+    let root = vault.authenticate(&root_secret).unwrap();
+
+    assert!(matches!(
+        vault.create_project(&root, "demo", "Demo"),
+        Err(VaultError::Forbidden)
+    ));
+    assert!(matches!(
+        vault.audit_trail(&root),
+        Err(VaultError::Forbidden)
+    ));
+
+    assert!(
+        vault
+            .create_user(&root, "first@example.com", "a long enough password")
+            .is_ok()
+    );
+}
+
+#[test]
+fn the_root_token_stops_working_once_it_has_been_used() {
+    // It exists to create the first account. Leaving it valid afterwards means
+    // a copy in terminal scrollback is a permanent key to everything.
+    let dir = TempDir::new("root-once");
+    let mut vault = Vault::open(&dir.file()).unwrap();
+    let root_secret = vault.init(1, 1).unwrap().root_token.to_string();
+    let root = vault.authenticate(&root_secret).unwrap();
+
+    vault
+        .create_user(&root, "first@example.com", "a long enough password")
+        .unwrap();
+
+    assert!(
+        vault.authenticate(&root_secret).is_none(),
+        "the root token should be spent"
+    );
+}
+
+#[test]
+fn a_session_may_do_everything() {
+    let mut fixture = ready("session-powers");
+    let caller = fixture.vault.authenticate(&fixture.session).unwrap();
+
+    assert!(fixture.vault.create_project(&caller, "demo", "Demo").is_ok());
+    assert!(
+        fixture
+            .vault
+            .create_environment(&caller, "demo", "dev", "Development")
+            .is_ok()
+    );
+    assert!(fixture.vault.project_slugs(&caller).is_ok());
+    assert!(
+        fixture
+            .vault
+            .create_user(&caller, "second@example.com", "a long enough password")
+            .is_ok()
+    );
+    assert!(
+        fixture
+            .vault
+            .issue_machine_token(&caller, "demo", "dev", "ci", None)
+            .is_ok()
+    );
+    assert!(fixture.vault.audit_trail(&caller).is_ok());
+}
+
+// --- token lifetimes -------------------------------------------------------
+
+#[test]
+fn an_absurd_token_lifetime_is_refused_rather_than_stored() {
+    // A lifetime that lands outside the timestamp format cannot be read back,
+    // so accepting one would break the replay permanently on the next restart.
+    let mut fixture = ready("ttl-range");
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
+    let caller = fixture.vault.authenticate(&fixture.session).unwrap();
+
+    assert!(matches!(
+        fixture
+            .vault
+            .issue_machine_token(&caller, "demo", "dev", "ci", Some(i64::MAX)),
+        Err(VaultError::Invalid(_))
+    ));
+    assert!(matches!(
+        fixture
+            .vault
+            .issue_machine_token(&caller, "demo", "dev", "ci", Some(i64::MIN)),
+        Err(VaultError::Invalid(_))
+    ));
+    assert!(
+        fixture
+            .vault
+            .issue_machine_token(&caller, "demo", "dev", "ci", Some(365 * 86_400))
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_vault_with_a_long_lived_token_still_replays() {
+    let mut fixture = ready("ttl-replay");
+    fixture.vault.create_project(&fixture.caller, "demo", "Demo").unwrap();
+    fixture.vault.create_environment(&fixture.caller, "demo", "dev", "Development").unwrap();
+    let caller = fixture.vault.authenticate(&fixture.session).unwrap();
+    fixture
+        .vault
+        .issue_machine_token(&caller, "demo", "dev", "ci", Some(10 * 365 * 86_400))
+        .unwrap();
+
+    let path = fixture.dir.file();
+    let shares = fixture.shares.clone();
+    drop(fixture.vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    for share in shares.iter().take(3) {
+        reopened.submit_share(share).unwrap();
+    }
+
+    assert!(!reopened.is_sealed(), "the log should still replay");
 }

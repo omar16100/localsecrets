@@ -56,10 +56,10 @@ impl Harness {
             headers.push(("authorization", bearer));
         }
 
-        let response = self
-            .client
-            .send(method, path, &headers, body.as_bytes())
-            .unwrap();
+        let response = match self.client.send(method, path, &headers, body.as_bytes()) {
+            Ok(response) => response,
+            Err(e) => panic!("{method} {path} failed: {e:?}"),
+        };
         // A 204 has no body at all, which is not an error here.
         let text = response.body_text().unwrap_or("").trim();
         let value = if text.is_empty() {
@@ -550,4 +550,148 @@ fn an_error_body_never_carries_a_secret_value() {
 
     assert!(status >= 400);
     assert!(!body.to_string().contains("do-not-echo-me"), "{body}");
+}
+
+// --- a machine token must not be able to grow into an account ---------------
+
+/// A project with a dev environment and a machine token scoped to it.
+fn machine_token(api: &Harness) -> String {
+    let session = api.with_project();
+    let (status, body) = api.post(
+        "/v1/tokens",
+        Some(&session),
+        r#"{"project":"demo","environment":"dev","label":"ci"}"#,
+    );
+    assert_eq!(status, 201, "{body}");
+    body.get("token").and_then(Value::as_str).unwrap().to_owned()
+}
+
+#[test]
+fn a_machine_token_cannot_create_an_account() {
+    // This is the escalation that matters: an account is unconfined, so a
+    // machine token that can make one owns every project.
+    let api = Harness::start("machine-no-user");
+    let machine = machine_token(&api);
+
+    let (status, _) = api.post(
+        "/v1/users",
+        Some(&machine),
+        r#"{"email":"attacker@example.com","password":"a long enough password"}"#,
+    );
+
+    assert_eq!(status, 403);
+}
+
+#[test]
+fn a_machine_token_cannot_create_projects_or_environments() {
+    let api = Harness::start("machine-no-projects");
+    let machine = machine_token(&api);
+
+    assert_eq!(
+        api.post("/v1/projects", Some(&machine), r#"{"slug":"mine","name":"Mine"}"#).0,
+        403
+    );
+    assert_eq!(
+        api.post(
+            "/v1/projects/demo/envs",
+            Some(&machine),
+            r#"{"slug":"prod","name":"Production"}"#
+        )
+        .0,
+        403
+    );
+}
+
+#[test]
+fn a_machine_token_cannot_list_projects_or_read_the_audit_trail() {
+    let api = Harness::start("machine-no-listing");
+    let machine = machine_token(&api);
+
+    assert_eq!(api.get("/v1/projects", Some(&machine)).0, 403);
+    assert_eq!(api.get("/v1/audit", Some(&machine)).0, 403);
+}
+
+#[test]
+fn a_machine_token_cannot_mint_another_token() {
+    let api = Harness::start("machine-no-minting");
+    let machine = machine_token(&api);
+
+    let (status, _) = api.post(
+        "/v1/tokens",
+        Some(&machine),
+        r#"{"project":"demo","environment":"dev","label":"copy"}"#,
+    );
+
+    assert_eq!(status, 403);
+}
+
+#[test]
+fn a_machine_token_cannot_seal_the_server() {
+    let api = Harness::start("machine-no-seal");
+    let machine = machine_token(&api);
+
+    assert_eq!(api.post("/v1/sys/seal", Some(&machine), "").0, 403);
+    assert_eq!(api.get("/v1/sys/health", None).0, 200);
+}
+
+#[test]
+fn a_machine_token_reads_but_cannot_write_or_delete() {
+    let api = Harness::start("machine-read-only");
+    let machine = machine_token(&api);
+
+    assert_eq!(api.get("/v1/projects/demo/envs/dev/secrets", Some(&machine)).0, 200);
+    assert_eq!(
+        api.put(
+            "/v1/projects/demo/envs/dev/secrets/K",
+            Some(&machine),
+            r#"{"value":"changed"}"#
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        api.delete("/v1/projects/demo/envs/dev/secrets/K", Some(&machine)).0,
+        403
+    );
+}
+
+#[test]
+fn the_root_token_is_spent_by_creating_the_first_account() {
+    let api = Harness::start("root-spent");
+    let (_, body) = api.post("/v1/sys/init", None, r#"{"threshold":1,"shares":1}"#);
+    let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+
+    assert_eq!(
+        api.post(
+            "/v1/users",
+            Some(&root),
+            r#"{"email":"first@example.com","password":"a long enough password"}"#
+        )
+        .0,
+        201
+    );
+
+    assert_eq!(
+        api.post(
+            "/v1/users",
+            Some(&root),
+            r#"{"email":"second@example.com","password":"a long enough password"}"#
+        )
+        .0,
+        401,
+        "the root token should not work a second time"
+    );
+}
+
+#[test]
+fn the_root_token_cannot_do_anything_but_create_the_first_account() {
+    let api = Harness::start("root-narrow");
+    let (_, body) = api.post("/v1/sys/init", None, r#"{"threshold":1,"shares":1}"#);
+    let root = body.get("root_token").and_then(Value::as_str).unwrap().to_owned();
+
+    assert_eq!(
+        api.post("/v1/projects", Some(&root), r#"{"slug":"demo","name":"Demo"}"#).0,
+        403
+    );
+    assert_eq!(api.get("/v1/audit", Some(&root)).0, 403);
 }

@@ -24,11 +24,11 @@ Inspiration: Infisical (project / environment / secret addressing, machine ident
 
 Single node. No clustering, no external services, no database engine.
 
-The only third-party code in the whole system is audited cryptography (`aes-gcm`, `argon2`, `sha2`, `zeroize`, `subtle`) plus `getrandom`. HTTP, storage, JSON, logging, argument parsing and calendar arithmetic are written on the standard library. CI fails the build if the lockfile grows anything else. See [security.md](security.md) for the reasoning.
+The only direct third-party dependencies in the whole system are cryptographic: the RustCrypto crates `aes-gcm`, `argon2`, `sha2` and `zeroize`, plus `subtle` and `getrandom`, with their own transitive dependencies. localsecrets has never been audited, and no public audit covering the locked dependency versions was found (see [security.md](security.md#independent-review)). HTTP, storage, JSON, logging, argument parsing and calendar arithmetic are written on the standard library. CI fails the build if the lockfile grows anything else. See [security.md](security.md) for the reasoning.
 
 ## Components
 
-### `ls-core` — crypto, encodings, time. No I/O.
+### `ls-core`: crypto, encodings, time. No I/O.
 
 | Module | Holds |
 |---|---|
@@ -42,11 +42,11 @@ The only third-party code in the whole system is audited cryptography (`aes-gcm`
 
 No database, no network, no filesystem. That is what makes it exhaustively unit-testable.
 
-### `ls-json` — a strict JSON parser and renderer. No I/O.
+### `ls-json`: a strict JSON parser and renderer. No I/O.
 
 `value` holds the type and the renderer; `parser` is recursive descent, bounded at 64 deep, and refuses duplicate keys, trailing commas, leading zeros, raw control characters, lone surrogates and trailing content.
 
-### `ls-http` — HTTP/1.1 on `std::net`.
+### `ls-http`: HTTP/1.1 on `std::net`.
 
 | Module | Holds |
 |---|---|
@@ -57,11 +57,11 @@ No database, no network, no filesystem. That is what makes it exhaustively unit-
 
 Bounds live in `Limits`: head size, header count, body size, and a deadline for the whole request that is checked on every arrival of bytes.
 
-### `ls-log` — one line per event on standard error.
+### `ls-log`: one line per event on standard error.
 
 Timestamp, level, message, then `key=value`. Values are escaped, so nothing that reaches a field can forge a second record. Level from `LS_LOG`.
 
-### `ls-store` — the append-only log and the state folded from it.
+### `ls-store`: the append-only log and the state folded from it.
 
 | Module | Holds |
 |---|---|
@@ -69,7 +69,7 @@ Timestamp, level, message, then `key=value`. Values are escaped, so nothing that
 | `event` | What can happen, as JSON with a type tag and a format marker |
 | `state` | The fold: users, tokens, projects, environments, current secret values |
 
-### `ls-server` — the rules, and the HTTP layer over them.
+### `ls-server`: the rules, and the HTTP layer over them.
 
 | Module | Holds |
 |---|---|
@@ -82,7 +82,7 @@ Timestamp, level, message, then `key=value`. Values are escaped, so nothing that
 
 The HTTP layer holds no rules of its own. Every decision about what is allowed belongs to `vault`.
 
-### `ls-cli` — the client.
+### `ls-cli`: the client.
 
 | Module | Holds |
 |---|---|

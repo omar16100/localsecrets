@@ -77,11 +77,19 @@ Shamir sharing carries no integrity of its own. A wrong recombination is caught 
 
 ## Dependency policy
 
-The lockfile holds 45 entries, of which seven are this project's own crates. The only third-party code is audited cryptography (`aes-gcm`, `argon2`, `sha2`, `zeroize`, `subtle`) plus `getrandom`, and the proc-macro crates those pull in to build. HTTP, storage, JSON, logging, argument parsing and time are written on the standard library.
+The lockfile holds 45 entries, of which seven are this project's own crates. The direct third-party dependencies are all cryptographic: the RustCrypto crates `aes-gcm` 0.11.1, `argon2` 0.6.0, `sha2` 0.10.9 and `zeroize` 1.9.0, plus `subtle` 2.6.1 (dalek-cryptography) and `getrandom` 0.3.4 (rust-random). The remaining entries are what those pull in: further RustCrypto crates (`aes`, `ghash`, `polyval`, `ctr`, `blake2`, and the trait and utility crates) and small support crates (`cfg-if`, `libc`, `typenum`, `generic-array`, `version_check`, and the target-specific crates `getrandom` needs). HTTP, storage, JSON, logging, argument parsing and time are written on the standard library.
 
 This is a deliberate trade. Hand-written ciphers and key derivation functions fail quietly on side channels, so those stay with the specialists. Everything else is ordinary code where a smaller supply chain is worth more than a saved afternoon.
 
 Adding any dependency requires a reason recorded in `12092026_localsecrets_plan.md`.
+
+### Independent review
+
+localsecrets itself has never been audited. No public audit covering the crate versions in its lockfile was found in the READMEs and changelogs of every locked crate, checked on 27 September 2026.
+
+The only public review that any locked crate's README points to is NCC Group's [RustCrypto AES/GCM and ChaCha20+Poly1305 Implementation Review](https://web.archive.org/web/20240108154854/https://research.nccgroup.com/wp-content/uploads/2020/02/NCC_Group_MobileCoin_RustCrypto_AESGCM_ChaCha20Poly1305_Implementation_Review_2020-02-12_v1.0.pdf) (version 1.0, 13 February 2020, funded by MobileCoin; archived copy, because the original NCC Group URL now redirects to a general page). It reviewed the source at the commits listed in its Scope section, whose manifests give `aes-gcm` 0.3.0, `aes` 0.3.2, `ghash` 0.2.3 and `polyval` 0.3.2, and reported no vulnerabilities. This project locks `aes-gcm` 0.11.1, `aes` 0.9.2, `ghash` 0.6.0 and `polyval` 0.7.3, which are several releases later and were not part of that review. `argon2`, `sha2`, `zeroize`, `subtle` and `getrandom` are outside its scope, and the READMEs of `ctutils` (which `aes-gcm` 0.11.1 uses to compare authentication tags) and `cmov` (which `ctutils` is built on) state that they have never been independently audited.
+
+So the dependency policy rests on not hand-writing ciphers, key derivation or constant-time comparison, not on an audit.
 
 ## Re-splitting the shares
 

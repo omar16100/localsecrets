@@ -25,7 +25,9 @@ lsec run -- npm start                # the child gets the secrets in its environ
 
 ## Dependencies
 
-45 entries in the lockfile, of which seven are this project's own crates. The only third-party code is audited cryptography (`aes-gcm`, `argon2`, `sha2`, `zeroize`, `subtle`), `getrandom`, and the proc-macro crates those build with.
+45 entries in the lockfile, of which seven are this project's own crates. The direct third-party dependencies are all cryptographic: the RustCrypto crates `aes-gcm`, `argon2`, `sha2` and `zeroize`, plus `subtle` and `getrandom`. The rest of the lockfile is what those pull in: more RustCrypto crates and a few small support crates such as `cfg-if`, `libc` and `typenum`.
+
+localsecrets has never been audited, and no public audit covering the dependency versions it locks was found in those crates' READMEs and changelogs (checked 27 Sep 2026). An earlier `aes-gcm` release was reviewed by NCC Group in 2020; [docs/security.md](docs/security.md#independent-review) says which versions that covered and how this was checked.
 
 The HTTP server and client, the JSON parser, the storage layer, the logger, the argument parsing and the calendar arithmetic are written on the standard library. That is a deliberate trade for a tool whose whole job is guarding credentials: a smaller supply chain is worth the extra code, while hand-written ciphers and key derivation are not, because they fail quietly on side channels.
 

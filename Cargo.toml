@@ -26,9 +26,11 @@ expect_used = "warn"
 panic = "warn"
 
 # Dependency policy: the standard library covers HTTP, storage, JSON, logging,
-# argument parsing and time. The only third-party crates permitted are audited
-# cryptographic primitives, because hand-written ciphers and KDFs fail quietly
-# on side channels. Adding anything else needs a reason written down in
+# argument parsing and time. The only third-party crates permitted are
+# cryptographic primitives from maintained crates (RustCrypto, subtle,
+# getrandom) and what they pull in, because hand-written ciphers and KDFs fail
+# quietly on side channels. No public audit covering the locked versions was
+# found; see docs/security.md. Adding anything else needs a reason written down in
 # docs/12092026_localsecrets_plan.md.
 [workspace.dependencies]
 ls-core = { path = "crates/ls-core" }

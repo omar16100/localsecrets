@@ -21,6 +21,7 @@ Conventions for this project:
 |---|---|---|
 | [c4model.md](c4model.md) | Architecture | Architecture source of truth: containers, components, data flows |
 | [12092026_localsecrets_plan.md](12092026_localsecrets_plan.md) | Plan | Build plan, milestone status, decisions and deviations |
+| [27092026_crypto_claim_plan.md](27092026_crypto_claim_plan.md) | Plan | Replacing the uncited "audited cryptography" claim with the actual dependency list and audit status |
 | [security.md](security.md) | Reference | Threat model, key hierarchy, capabilities, what this does and does not protect |
 | [usage.md](usage.md) | Reference | Running the server, every command, configuration, what each refusal means |
 | [../README.md](../README.md) | Reference | What the project is, for someone arriving at the repository |

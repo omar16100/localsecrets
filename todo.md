@@ -1,6 +1,6 @@
 # todo
 
-## M0 — workspace scaffold
+## M0: workspace scaffold
 - [x] Cargo workspace, edition 2024, shared dependency versions
 - [x] Four crates: ls-core, ls-store, ls-server, ls-cli (stubs)
 - [x] Workspace lints: forbid unsafe, warn on unwrap/expect/panic
@@ -8,9 +8,9 @@
 - [x] docs/index.md, docs/c4model.md
 - [x] docs/12092026_localsecrets_plan.md
 - [x] docs/security.md (threat model)
-- [x] Dependency policy: audited crypto only, 326 crates down to 44
+- [x] Dependency policy: cryptography crates only, 326 crates down to 44
 
-## M1 — ls-core crypto (TDD)
+## M1: ls-core crypto (TDD)
 - [x] Encoding: URL-safe base64 and hex, RFC 4648 vectors
 - [x] Entropy as a Result, never a panic
 - [x] AEAD seal/open with canonical length-prefixed associated data
@@ -20,7 +20,7 @@
 - [x] Opaque token generation and hashing
 - [x] Apply findings from the codex crypto review
 
-## M2 — ls-json and ls-http
+## M2: ls-json and ls-http
 - [x] JSON parse, build, serialise; reject malformed input without panicking
 - [x] HTTP/1.1 request and response parsing, with body size limits
 - [x] Blocking server on std::net with a bounded thread pool
@@ -28,7 +28,7 @@
 - [x] Structured logging to stderr, level from the environment (ls-log)
 - [x] UTC timestamps and RFC 3339 (ls-core::time)
 
-## M3 — ls-store append-only log
+## M3: ls-store append-only log
 - [x] Record format with a version byte, length prefix and authentication
 - [x] Records bound to their position, so a reorder or replay fails
 - [x] Append with fsync, replay on open, torn-tail repair
@@ -37,21 +37,21 @@
 - [x] Crash-safety tests: truncated tail, edited record, wrong key
 - [x] Domain events and the state they fold into
 
-## M4 — seal/unseal and sessions
+## M4: seal/unseal and sessions
 - [x] init, unseal, seal, health
 - [x] Unseal progress guarded, duplicate shares ignored, failed attempt resets
 - [x] Init refuses a second time
 - [x] Root token kind, and creating the first user
 - [x] Login, logout, rate limiting, dummy verify on unknown accounts
 
-## M5 — projects, environments, secrets
+## M5: projects, environments, secrets
 - [x] Projects and environments
 - [x] Secrets: get one, list, put, delete, bulk write
 - [x] Machine tokens: issue, revoke, expiry, scope
 - [x] Audit record on every operation, including refusals
 - [x] localsecretsd binary with arguments and a 0700 data directory
 
-## M6 — CLI
+## M6: CLI
 - [x] Config, project pin, token file at 0600
 - [x] init, unseal, seal, status
 - [x] user create, login, logout
@@ -61,7 +61,7 @@
 - [x] `run -- command` with the child's exit code passed through
 - [x] token create and revoke, audit
 
-## M7 — verification
+## M7: verification
 - [x] End-to-end live run with the release binaries
 - [x] Ciphertext at rest: no value, key name, email or password readable in the store
 - [x] Log redaction at LS_LOG=debug: no value, password or token in the server log
@@ -81,7 +81,7 @@
   - [x] the root token is prompted for, never suggested on a command line
   - [x] security.md corrected: token comparison, dependency count, tail rollback
 
-## M8 — published
+## M8: published
 - [x] MIT LICENSE and README
 - [x] CI on Linux and macOS: build, clippy -D warnings, tests
 - [x] CI gate on the dependency policy, so it fails the build rather than
@@ -89,7 +89,7 @@
 - [x] cargo fmt across the workspace
 - [x] github.com/omar16100/localsecrets, public, CI green on the first run
 
-## M9 — second defect hunt applied
+## M9: second defect hunt applied
 - [x] blocker: a failed audit write during a re-split could destroy the vault
       (new shares dropped, new barrier already on disk). Re-split is now one
       rewrite, and the last thing that can fail
@@ -119,7 +119,7 @@
 - [x] a read or delete that finds nothing is recorded too
 - [x] lsec unseal --reset, which the API supported and the client could not reach
 
-## M10 — verification pass on the fixes
+## M10: verification pass on the fixes
 - [x] compaction keeps the handle it already has rather than reopening the
       path, so nothing after the rename can fail and lose a re-split
 - [x] the directory is flushed after the rename, so a power loss cannot bring
@@ -137,6 +137,16 @@
 - [x] a request for a name that does not exist is recorded, so walking the
       name space is visible in the trail
 - [x] the bulk-write comment says what it actually guarantees
+
+## 27 Sep 2026: dependency audit claim
+- [x] "audited cryptography" removed from README, security.md, c4model.md,
+      Cargo.toml and the CI comment; no public audit of the locked versions found
+- [x] security.md cites the only public review the locked crates reference (NCC
+      Group, 2020) and the versions it covered (aes-gcm 0.3.0, aes 0.3.2,
+      ghash 0.2.3, polyval 0.3.2)
+- [x] stale "proc-macro crates" wording replaced with the real transitive set
+- [x] GitHub description reworded, topics added
+- [x] docs/27092026_crypto_claim_plan.md
 
 ## Next, if it is picked up again
 - [ ] Wire compaction to a command, so deleting a secret can also remove its
